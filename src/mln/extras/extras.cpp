@@ -175,6 +175,16 @@ const PlanarProjection* planarProjection() noexcept {
     return activeProjection.load(std::memory_order_acquire);
 }
 
+bool worldWrapDisabled() noexcept {
+    // 扩展只有在配置了合法范围时才发布 WorldExtent,指针非空即世界有界。
+    return activeExtent.load(std::memory_order_acquire) != nullptr;
+}
+
+bool renderZoomGateDisabled() noexcept {
+    // 稀疏层级方案生效即放开渲染侧的相机 zoom 图层闸门(见 hooks.hpp 注释)。
+    return activeScheme.load(std::memory_order_acquire) != nullptr;
+}
+
 WorldBounds worldBounds() noexcept {
     auto* extent = activeExtent.load(std::memory_order_acquire);
     if (!extent) {

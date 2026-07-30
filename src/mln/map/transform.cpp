@@ -1,3 +1,4 @@
+#include <mln/extras/hooks.hpp>
 #include <mln/map/camera.hpp>
 #include <mln/map/transform.hpp>
 #include <mln/util/constants.hpp>
@@ -39,6 +40,13 @@ double _normalizeAngle(double angle, double anchorAngle) {
     }
 
     return angle;
+}
+
+/// hook:经度回卷是否应当禁用。上游在设置了 LatLngBounds 时本就跳过回卷
+/// (有界世界不可循环);extra 的 world-bounds 声明了同样的事实,判定逻辑
+/// 在 extras 内(见 extras::worldWrapDisabled)。
+bool latLngWrapDisabled(const TransformState& state) {
+    return state.getLatLngBounds() != LatLngBounds() || extras::worldWrapDisabled();
 }
 } // namespace
 
@@ -122,7 +130,7 @@ void Transform::easeTo(const CameraOptions& inputCamera, const AnimationOptions&
     const EdgeInsets& padding = camera.padding.value_or(state.getEdgeInsets());
     LatLng startLatLng = getLatLng(LatLng::Unwrapped);
     const LatLng& unwrappedLatLng = camera.center.value_or(startLatLng);
-    const LatLng& latLng = state.getLatLngBounds() != LatLngBounds() ? unwrappedLatLng : unwrappedLatLng.wrapped();
+    const LatLng& latLng = latLngWrapDisabled(state) ? unwrappedLatLng : unwrappedLatLng.wrapped();
 
     double bearing = camera.bearing ? util::deg2rad(-*camera.bearing) : getBearing();
     double pitch = camera.pitch ? util::deg2rad(*camera.pitch) : getPitch();
@@ -137,7 +145,7 @@ void Transform::easeTo(const CameraOptions& inputCamera, const AnimationOptions&
         return;
     }
 
-    if (state.getLatLngBounds() == LatLngBounds()) {
+    if (!latLngWrapDisabled(state)) {
         if (isGestureInProgress()) {
             // If gesture in progress, we transfer the wrap rounds from the end
             // longitude into start, so the "scroll effect" of rounding the
@@ -226,7 +234,9 @@ void Transform::flyTo(const CameraOptions& inputCamera,
     state.constrainCameraAndZoomToBounds(camera, zoom);
 
     const EdgeInsets& padding = camera.padding.value_or(state.getEdgeInsets());
-    const LatLng& latLng = camera.center.value_or(getLatLng(LatLng::Unwrapped)).wrapped();
+    const bool noWrap = latLngWrapDisabled(state);
+    const LatLng latLng = noWrap ? camera.center.value_or(getLatLng(LatLng::Unwrapped))
+                                 : camera.center.value_or(getLatLng(LatLng::Unwrapped)).wrapped();
     const double centerAlt = camera.centerAltitude.value_or(state.getCenterAltitude());
     double bearing = camera.bearing ? util::deg2rad(-*camera.bearing) : getBearing();
     double pitch = camera.pitch ? util::deg2rad(*camera.pitch) : getPitch();
@@ -242,8 +252,10 @@ void Transform::flyTo(const CameraOptions& inputCamera,
     }
 
     // Determine endpoints.
-    LatLng startLatLng = getLatLng(LatLng::Unwrapped).wrapped();
-    startLatLng.unwrapForShortestPath(latLng);
+    LatLng startLatLng = noWrap ? getLatLng(LatLng::Unwrapped) : getLatLng(LatLng::Unwrapped).wrapped();
+    if (!noWrap) {
+        startLatLng.unwrapForShortestPath(latLng);
+    }
     const double startCenterAlt = state.getCenterAltitude();
 
     const Point<double> startPoint = Projection::project(startLatLng, state.getScale());

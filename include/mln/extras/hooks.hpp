@@ -131,5 +131,21 @@ const PlanarProjection* planarProjection() noexcept;
 /// 相机约束因此与原版逐位相同。
 WorldBounds worldBounds() noexcept;
 
+/// world-bounds 生效时经度回卷必须禁用:数据矩形不是 360° 周期的,把越界经度
+/// 按 ±360 回卷会把相机传送到另一侧(边界处重滑即"从左边跑到右边")。
+/// 无扩展生效时返回 false,回卷行为与原版完全一致。
+bool worldWrapDisabled() noexcept;
+
+/// 稀疏层级方案生效时,渲染侧"按相机 zoom 隐藏图层"的闸门必须禁用。
+///
+/// 桶本来就是按【瓦片自身层级】建的(geometry_tile.cpp 的 layout 过滤),每张
+/// 瓦片只持有自己那级图层的桶、配色在解析期烘焙——样式天然是瓦片的属性。而
+/// 渲染清单却按【相机 zoom】筛图层:跨数据级的瞬间,引擎 retain 旧级瓦片顶着
+/// 渲染,旧级图层已被相机 zoom 踢出清单,瓦片里颜色正确的桶无人问津,画面上
+/// 整片要素消失(闪白)。放开闸门后由"哪些瓦片有它的桶"决定图层画在哪,
+/// 过渡期旧级瓦片继续由旧级图层正确着色。
+/// 无扩展生效时返回 false,渲染行为与原版完全一致。
+bool renderZoomGateDisabled() noexcept;
+
 } // namespace extras
 } // namespace mln
