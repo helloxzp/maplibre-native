@@ -1,4 +1,5 @@
 #include <mln/style/parser.hpp>
+#include <mln/extras/extras.hpp>
 #include <mln/style/layer_impl.hpp>
 #include <mln/style/rapidjson_conversion.hpp>
 #include <mln/style/conversion/coordinate.hpp>
@@ -102,6 +103,14 @@ StyleParseResult Parser::parse(const std::string& json) {
         if (value.IsNumber()) {
             roll = value.GetDouble();
         }
+    }
+
+    // hook:根级 `extra` 对象驱动可插拔扩展(见 src/mln/extras)。
+    // 字段缺失时传 nullptr,所有扩展复位为原版行为。放在 sources 之前解析,
+    // 保证数据源首次取瓦片时映射已经生效。
+    {
+        const auto extra = document.FindMember("extra");
+        extras::Registry::configure(extra != document.MemberEnd() ? &extra->value : nullptr);
     }
 
     if (document.HasMember("transition")) {

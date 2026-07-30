@@ -1,5 +1,7 @@
 #include <mapbox/geometry/box.hpp>
 #include <mln/storage/resource.hpp>
+
+#include <mln/extras/hooks.hpp>
 #include <mln/util/constants.hpp>
 #include <mln/util/string.hpp>
 #include <mln/util/token.hpp>
@@ -94,6 +96,16 @@ Resource Resource::tile(const std::string& urlTemplate,
                         Tileset::Scheme scheme,
                         LoadingMethod loadingMethod) {
     bool supportsRatio = urlTemplate.find("{ratio}") != std::string::npos;
+    // hook:稀疏金字塔中,本层级若无数据则改取祖先数据瓦片(见 src/mln/extras);
+    // 多个 canonical 瓦片会命中同一 URL,由 HTTP 缓存去重。
+    if (const auto sub = extras::tileSubdivision(static_cast<uint8_t>(z),
+                                                 static_cast<uint32_t>(x),
+                                                 static_cast<uint32_t>(y));
+        sub.steps > 0) {
+        x >>= sub.steps;
+        y >>= sub.steps;
+        z = static_cast<int8_t>(sub.dataZ);
+    }
     if (scheme == Tileset::Scheme::TMS) {
         y = (1 << z) - y - 1;
     }

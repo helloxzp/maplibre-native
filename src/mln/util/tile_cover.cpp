@@ -1,3 +1,4 @@
+#include <mln/extras/hooks.hpp>
 #include <mln/math/log2.hpp>
 #include <mln/util/bounding_volumes.hpp>
 #include <mln/util/constants.hpp>
@@ -148,11 +149,12 @@ std::vector<UnwrappedTileID> tileCover(const Point<double>& tl,
 
 int32_t coveringZoomLevel(double zoom, style::SourceType type, uint16_t size) noexcept {
     zoom += util::log2(util::tileSize_D / size);
-    if (type == style::SourceType::Raster || type == style::SourceType::Video) {
-        return static_cast<int32_t>(std::round(zoom));
-    } else {
-        return static_cast<int32_t>(std::floor(zoom));
-    }
+    const int32_t level = (type == style::SourceType::Raster || type == style::SourceType::Video)
+                              ? static_cast<int32_t>(std::round(zoom))
+                              : static_cast<int32_t>(std::floor(zoom));
+    // hook:style 的 `extra` 扩展可把层级重映射到稀疏金字塔真实存在的层级
+    // (见 src/mln/extras);无扩展生效时原样返回。
+    return extras::mapCoveringZoom(level);
 }
 
 std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
