@@ -1,6 +1,7 @@
 #include <mln/renderer/render_orchestrator.hpp>
 
 #include <mln/annotation/annotation_manager.hpp>
+#include <mln/extras/hooks.hpp>
 #include <mln/layermanager/layer_manager.hpp>
 #include <mln/renderer/change_request.hpp>
 #include <mln/renderer/renderer_observer.hpp>
@@ -377,7 +378,11 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
             RenderLayer& layer = orderedLayers[index];
             const auto* layerInfo = layer.baseImpl->getTypeInfo();
             const bool layerIsVisible = layer.baseImpl->visibility != style::VisibilityType::None;
-            const bool zoomFitsLayer = layer.supportsZoom(zoomHistory.lastZoom);
+            // hook:稀疏层级方案生效时放开相机 zoom 闸门——桶本就按瓦片自身层级建
+            // (见 geometry_tile.cpp 的 layout 过滤),由"哪些瓦片有它的桶"决定图层
+            // 画在哪;否则跨数据级的过渡期,retained 旧级瓦片会因旧级图层被相机
+            // zoom 踢出清单而整片消失(闪白)。无扩展生效时行为与原版一致。
+            const bool zoomFitsLayer = layer.supportsZoom(zoomHistory.lastZoom) || extras::renderZoomGateDisabled();
             renderTreeParameters->has3D |= (layerInfo->pass3d == LayerTypeInfo::Pass3D::Required);
 
             if (layerInfo->source != LayerTypeInfo::Source::NotRequired) {
