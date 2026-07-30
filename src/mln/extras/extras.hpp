@@ -32,7 +32,7 @@ public:
     virtual ~Extension() = default;
 
     /// 本扩展在 `extra` 中占用的键名。一个扩展可以认领多个相关的键
-    /// (例如层级方案同时管 "tile-zoom" 与 "tile-size"),这样它们共用
+    /// (例如层级方案同时管 "tile-levels" 与 "tile-size"),这样它们共用
     /// 同一份状态,不会出现两个扩展抢同一个 hook 的问题。
     virtual std::vector<std::string> keys() const = 0;
 

@@ -3,20 +3,45 @@
 #include <mln/util/logging.hpp>
 #include <mln/util/string.hpp>
 
-#include <charconv>
-#include <string_view>
+#include <algorithm>
 #include <cmath>
+#include <string_view>
+#include <vector>
 
 namespace mln {
 namespace extras {
 
 namespace {
 
-/// JSON 对象的键一律是字符串,这里要求整串都是合法层级数字。
-bool parseLevel(const char* text, std::size_t length, int32_t& out) {
-    const char* end = text + length;
-    const auto result = std::from_chars(text, end, out);
-    return result.ec == std::errc{} && result.ptr == end;
+/// tile-levels 的一条:数据所在四叉树层级 / URL 标签 / 起始 canonical 层级。
+struct LevelEntry {
+    int32_t zoom = 0;
+    int32_t id = 0;
+    int32_t from = 0;
+};
+
+/// 层级字段一律是整数。小数在这里没有意义:zoom/from 落在"瓦片 → 数据"这条
+/// 链上,而 subdivision() 只看得到瓦片 id 看不到相机,同一张瓦片不可能因为相机
+/// 停在 15.2 还是 15.7 而取不同的数据源。直接拒绝,不做静默截断。
+bool readLevel(const JSValue& value, int32_t& out) {
+    if (!value.IsNumber()) {
+        return false;
+    }
+    const double raw = value.GetDouble();
+    if (std::floor(raw) != raw) {
+        return false;
+    }
+    out = static_cast<int32_t>(raw);
+    return true;
+}
+
+/// 读一个可选的整数字段;缺省时保持 `out` 不变。返回 false 表示字段存在但不是整数。
+bool readOptionalLevel(const JSValue& entry, const char* name, int32_t& out) {
+    const auto it = entry.FindMember(name);
+    if (it == entry.MemberEnd()) {
+        return true;
+    }
+    return readLevel(it->value, out);
 }
 
 } // namespace
@@ -29,6 +54,10 @@ void TileSchemeExtension::reset() {
     for (auto& entry : table) {
         entry.store(identity, std::memory_order_relaxed);
     }
+    for (auto& entry : levelIds) {
+        entry.store(identity, std::memory_order_relaxed);
+    }
+    aliased.store(false, std::memory_order_relaxed);
     sizeShift.store(0, std::memory_order_relaxed);
     centeredOrigin.store(false, std::memory_order_relaxed);
     active.store(false, std::memory_order_release);
@@ -70,38 +99,80 @@ bool TileSchemeExtension::configure(const std::string& key, const JSValue& value
         return true;
     }
 
-    if (!value.IsObject()) {
-        Log::Warning(Event::ParseStyle, "extra.tile-zoom 必须是 {层级: 层级} 形式的对象");
+    // 余下的就是 tile-levels(keys() 只声明了这三个键)。
+    if (!value.IsArray() || value.Empty()) {
+        Log::Warning(Event::ParseStyle, "extra.tile-levels 必须是非空数组,元素形如 {\"zoom\":4,\"id\":5,\"from\":4}");
         return false;
     }
 
-    // 先写入临时表,保证某一项格式错误时不会留下半生效的映射。
-    std::array<int8_t, maxLevel + 1> pending;
-    pending.fill(identity);
-
-    for (const auto& member : value.GetObject()) {
-        int32_t from = 0;
-        if (!member.name.IsString() || !parseLevel(member.name.GetString(), member.name.GetStringLength(), from)) {
-            Log::Warning(Event::ParseStyle, "extra.tile-zoom 的键必须是缩放层级");
+    std::vector<LevelEntry> entries;
+    entries.reserve(value.Size());
+    for (const auto& item : value.GetArray()) {
+        if (!item.IsObject()) {
+            Log::Warning(Event::ParseStyle, "extra.tile-levels 的元素必须是对象");
             return false;
         }
-        if (!member.value.IsNumber()) {
-            Log::Warning(Event::ParseStyle, "extra.tile-zoom[" + util::toString(from) + "] 的值必须是缩放层级");
+        LevelEntry entry;
+        const auto zoomIt = item.FindMember("zoom");
+        if (zoomIt == item.MemberEnd() || !readLevel(zoomIt->value, entry.zoom)) {
+            Log::Warning(Event::ParseStyle, "extra.tile-levels 的每条都必须有整数字段 zoom(数据所在四叉树层级)");
             return false;
         }
-        const auto to = static_cast<int32_t>(member.value.GetDouble());
-        if (from < 0 || from > maxLevel || to < 0 || to > maxLevel) {
+        entry.id = entry.zoom;   // 默认 URL 标签就是四叉树层级
+        entry.from = entry.zoom; // 默认从本层级起启用
+        if (!readOptionalLevel(item, "id", entry.id) || !readOptionalLevel(item, "from", entry.from)) {
+            Log::Warning(Event::ParseStyle, "extra.tile-levels 的 id / from 必须是整数(小数在此无意义)");
+            return false;
+        }
+        if (entry.zoom < 0 || entry.zoom > maxLevel || entry.id < 0 || entry.id > maxLevel || entry.from < 0 ||
+            entry.from > maxLevel) {
             Log::Warning(Event::ParseStyle,
-                         "extra.tile-zoom 条目 " + util::toString(from) + ":" + util::toString(to) + " 超出 0.." +
-                             util::toString(maxLevel));
+                         "extra.tile-levels 条目超出 0.." + util::toString(maxLevel) +
+                             ":zoom=" + util::toString(entry.zoom) + " id=" + util::toString(entry.id) +
+                             " from=" + util::toString(entry.from));
             return false;
         }
-        pending[static_cast<std::size_t>(from)] = static_cast<int8_t>(to);
+        entries.push_back(entry);
     }
 
-    for (std::size_t i = 0; i < pending.size(); ++i) {
-        table[i].store(pending[i], std::memory_order_relaxed);
+    // 允许乱序书写,但 from 不能重复——否则同一 canonical 层级有两个数据来源。
+    std::sort(entries.begin(), entries.end(), [](const LevelEntry& a, const LevelEntry& b) { return a.from < b.from; });
+    for (std::size_t i = 1; i < entries.size(); ++i) {
+        if (entries[i].from == entries[i - 1].from) {
+            Log::Warning(Event::ParseStyle, "extra.tile-levels 有重复的 from=" + util::toString(entries[i].from));
+            return false;
+        }
     }
+
+    // 先写入临时表,保证某一项格式错误时不会留下半生效的映射。
+    std::array<int8_t, maxLevel + 1> pendingData;
+    std::array<int8_t, maxLevel + 1> pendingIds;
+    pendingData.fill(identity);
+    pendingIds.fill(identity);
+
+    // canonical 层级 n 用 from <= n 中 from 最大的一条;比最小的 from 还粗的层级
+    // 一并落到最粗那条(它们无法由更粗的数据细分而来,coveringZoom 会抬高取瓦层级)。
+    std::size_t cursor = 0;
+    for (int32_t level = 0; level <= maxLevel; ++level) {
+        while (cursor + 1 < entries.size() && entries[cursor + 1].from <= level) {
+            ++cursor;
+        }
+        pendingData[static_cast<std::size_t>(level)] = static_cast<int8_t>(entries[cursor].zoom);
+    }
+    for (const auto& entry : entries) {
+        pendingIds[static_cast<std::size_t>(entry.zoom)] = static_cast<int8_t>(entry.id);
+    }
+
+    bool anyAlias = false;
+    for (const auto& entry : entries) {
+        anyAlias = anyAlias || entry.id != entry.zoom;
+    }
+
+    for (std::size_t i = 0; i < pendingData.size(); ++i) {
+        table[i].store(pendingData[i], std::memory_order_relaxed);
+        levelIds[i].store(pendingIds[i], std::memory_order_relaxed);
+    }
+    aliased.store(anyAlias, std::memory_order_relaxed);
     active.store(true, std::memory_order_release);
     return true;
 }
@@ -142,6 +213,14 @@ TileSubdivision TileSchemeExtension::subdivision(uint8_t z, uint32_t x, uint32_t
 
 namespace mln {
 namespace extras {
+
+int32_t TileSchemeExtension::levelId(uint8_t z) const noexcept {
+    if (static_cast<int32_t>(z) > maxLevel) {
+        return z;
+    }
+    const int32_t id = levelIds[z].load(std::memory_order_relaxed);
+    return id == identity ? z : id;
+}
 
 void TileSchemeExtension::translate(uint8_t z, int64_t& x, int64_t& y) const noexcept {
     if (!centeredOrigin.load(std::memory_order_relaxed) || z == 0) {

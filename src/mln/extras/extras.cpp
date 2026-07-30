@@ -139,6 +139,13 @@ int32_t mapCoveringZoom(int32_t level) noexcept {
     return level;
 }
 
+int32_t tileLevelId(uint8_t z) noexcept {
+    if (auto* scheme = activeScheme.load(std::memory_order_acquire)) {
+        return scheme->levelId(z);
+    }
+    return z;
+}
+
 void translateTileCoords(uint8_t z, int64_t& x, int64_t& y) noexcept {
     if (auto* scheme = activeScheme.load(std::memory_order_acquire)) {
         scheme->translate(z, x, y);

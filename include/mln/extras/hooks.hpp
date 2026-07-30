@@ -38,6 +38,13 @@ public:
     /// 查询 canonical 瓦片 (z,x,y) 的数据来源。
     virtual TileSubdivision subdivision(uint8_t z, uint32_t x, uint32_t y) const noexcept = 0;
 
+    /// 把四叉树层级翻成数据源在 URL 里使用的层级标签。
+    ///
+    /// 两者不一定相等:百度的 z 只是标签,与分辨率没有固定倍率关系
+    /// (z {3,5,7,9,10,12,15,17,19} 对应的四叉树层级是 {3,4,6,8,10,11,14,15,17}),
+    /// 而子分步数必须按四叉树层级算,所以标签要单独映射。默认恒等。
+    virtual int32_t levelId(uint8_t z) const noexcept = 0;
+
     /// 把引擎的瓦片编号换算成数据源的编号(原点位置与 y 轴朝向的约定)。
     /// 默认恒等;百度一类以世界中心为原点、y 轴朝北的网格需要平移加翻转。
     virtual void translate(uint8_t z, int64_t& x, int64_t& y) const noexcept = 0;
@@ -84,6 +91,9 @@ int32_t mapCoveringZoom(int32_t level) noexcept;
 
 /// 查询瓦片的数据来源。无扩展生效时返回 `{z, 0, 0, 0}`,即本层级直接取数据。
 TileSubdivision tileSubdivision(uint8_t z, uint32_t x, uint32_t y) noexcept;
+
+/// 把四叉树层级翻成数据源的层级标签;无扩展生效时原样返回。
+int32_t tileLevelId(uint8_t z) noexcept;
 
 /// 按当前生效的编号约定换算瓦片编号;无扩展生效时原样返回。
 void translateTileCoords(uint8_t z, int64_t& x, int64_t& y) noexcept;

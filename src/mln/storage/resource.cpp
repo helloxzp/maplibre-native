@@ -114,6 +114,8 @@ Resource Resource::tile(const std::string& urlTemplate,
         x = static_cast<int32_t>(tx);
         y = static_cast<int32_t>(ty);
     }
+    // hook:编号换算完成后,才把四叉树层级翻成数据源的层级标签。
+    z = static_cast<int8_t>(extras::tileLevelId(static_cast<uint8_t>(z)));
     if (scheme == Tileset::Scheme::TMS) {
         y = (1 << z) - y - 1;
     }
