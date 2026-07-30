@@ -85,6 +85,29 @@ public:
     virtual void unproject(double x, double y, double& lng, double& lat) const noexcept = 0;
 };
 
+/// 数据实际覆盖的地理范围。
+///
+/// 归一化世界方块不一定被数据填满:BD09MC 为了让百度网格退化成标准四叉树,
+/// 世界边长取 2^26 米,而数据只占其中宽 59.7%(经度 ±180°)、高 38.4%
+/// (纬度 ±74°)。相机若按整块方块约束,缩到最小时四周会露出大片空白。
+///
+/// 用裸 double 而非 LatLngBounds,使本头文件不引入任何依赖。
+class WorldExtent {
+public:
+    virtual ~WorldExtent() = default;
+
+    /// 数据覆盖的经纬度范围,基准面与引擎对外 API 一致(WGS-84)。
+    virtual void bounds(double& west, double& south, double& east, double& north) const noexcept = 0;
+};
+
+/// 数据在归一化世界方块中占据的矩形,原点在西北角,y 轴朝南。
+struct WorldBounds {
+    double x0 = 0.0; ///< 西
+    double y0 = 0.0; ///< 北
+    double x1 = 1.0; ///< 东
+    double y1 = 1.0; ///< 南
+};
+
 /// 应用当前生效的取瓦层级钳制,没有扩展生效时原样返回 `level`。
 /// 热路径:每帧每个数据源调用一次,无扩展时仅一次原子读取加一次分支。
 int32_t mapCoveringZoom(int32_t level) noexcept;
@@ -103,6 +126,10 @@ const DatumShift* datumShift() noexcept;
 
 /// 当前生效的平面投影;没有扩展生效时返回 nullptr(调用方用原生 Web 墨卡托)。
 const PlanarProjection* planarProjection() noexcept;
+
+/// 当前生效的世界范围,已换算成归一化坐标;没有扩展生效时返回整块 {0,0,1,1},
+/// 相机约束因此与原版逐位相同。
+WorldBounds worldBounds() noexcept;
 
 } // namespace extras
 } // namespace mln

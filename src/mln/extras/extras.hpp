@@ -15,7 +15,8 @@
 ///   - `storage/resource.cpp`    Resource::tile() 里把 URL 改指数据层级祖先
 ///   - `tile/vector_mvt_tile.cpp` setData() 里对几何做子格仿射变换
 ///   - `util/projection.hpp`      经纬度 ↔ 墨卡托两个方向的基准面换算
-///   - `map/transform_state.cpp`  相机侧三处内联墨卡托的同名换算
+///   - `map/transform_state.cpp`  相机侧三处内联墨卡托的同名换算,以及
+///                                constrain() 按数据实际范围收紧相机约束
 /// style 不含 `extra` 时,全部扩展保持复位,渲染行为与原版 MapLibre 完全一致。
 namespace mln {
 namespace extras {
@@ -51,6 +52,9 @@ public:
 
     /// 本扩展提供的平面投影;不提供则返回 nullptr。
     virtual PlanarProjection* planarProjection() noexcept { return nullptr; }
+
+    /// 本扩展声明的世界范围;不声明则返回 nullptr(相机按整块方块约束)。
+    virtual WorldExtent* worldExtent() noexcept { return nullptr; }
 };
 
 /// 进程级扩展集合。

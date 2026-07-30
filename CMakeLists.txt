@@ -472,6 +472,8 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/extras/offset.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/extras/tile_scheme.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/extras/tile_scheme.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/extras/world_bounds.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/extras/world_bounds.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/annotation/annotation_manager.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/annotation/annotation_manager.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/annotation/annotation_source.cpp

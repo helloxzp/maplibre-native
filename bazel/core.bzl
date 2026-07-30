@@ -130,6 +130,8 @@ MLN_CORE_SOURCE = [
     "src/mln/extras/offset.hpp",
     "src/mln/extras/tile_scheme.cpp",
     "src/mln/extras/tile_scheme.hpp",
+    "src/mln/extras/world_bounds.cpp",
+    "src/mln/extras/world_bounds.hpp",
     "src/mln/annotation/annotation_manager.cpp",
     "src/mln/annotation/annotation_manager.hpp",
     "src/mln/annotation/annotation_source.cpp",

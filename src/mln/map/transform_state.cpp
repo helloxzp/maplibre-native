@@ -881,18 +881,39 @@ void TransformState::constrain(double& scale_, double& x_, double& y_) const {
         return;
     }
 
+    // hook:数据未必铺满归一化世界方块。BD09MC 为了让百度网格退化成标准四叉树,
+    // 世界边长必须取 2^26 米,数据只占宽 59.7%、高 38.4%,按整块方块约束会让相机
+    // 缩到四周露白。无扩展生效时返回 {0,0,1,1},下面的算式与原版逐位相同。
+    const auto world = extras::worldBounds();
+    // 声明了 world-bounds 就意味着"别让视口跑到数据外面",两个轴都得管。Android
+    // 默认是 HeightOnly(只管 Y),横向能一直拖到露白,所以这里连 X 一起约束。
+    // 未声明时下面的算式与原版逐位相同,HeightOnly 的语义也原样保留。
+    const bool bounded = world.x0 > 0.0 || world.y0 > 0.0 || world.x1 < 1.0 || world.y1 < 1.0;
+    const bool constrainX = constrainMode == ConstrainMode::WidthAndHeight || bounded;
+
+    const double viewY = rotatedNorth() ? size.width : size.height;
+    const double viewX = rotatedNorth() ? size.height : size.width;
+
     // Constrain scale to avoid zooming out far enough to show off-world areas on the Y axis.
-    const double ratioY = (rotatedNorth() ? size.width : size.height) / util::tileSize_D;
-    scale_ = util::max(scale_, ratioY);
+    scale_ = util::max(scale_, (viewY / util::tileSize_D) / (world.y1 - world.y0));
+    if (bounded) {
+        // 窄范围 + 宽视口时,横向才是先露白的那一侧,缩放下限取两轴较严者。
+        // 只在声明了范围时加这一条:原版即使 WidthAndHeight 也不约束 X 轴缩放,
+        // 未声明范围的行为必须逐位保持不变。
+        scale_ = util::max(scale_, (viewX / util::tileSize_D) / (world.x1 - world.x0));
+    }
 
     // Constrain min/max pan to avoid showing off-world areas on the Y axis.
-    double max_y = (scale_ * util::tileSize_D - (rotatedNorth() ? size.width : size.height)) / 2;
-    y_ = std::max(-max_y, std::min(y_, max_y));
+    // 内部坐标与归一化的关系是 n = 0.5 - v/worldSize(见 getLatLng),视口半高换算
+    // 过来即得下面的上下界;整块方块时化简回 ±(worldSize - viewY)/2。
+    const double worldSize = scale_ * util::tileSize_D;
+    const double halfY = viewY / 2;
+    y_ = std::max((0.5 - world.y1) * worldSize + halfY, std::min(y_, (0.5 - world.y0) * worldSize - halfY));
 
-    if (constrainMode == ConstrainMode::WidthAndHeight) {
+    if (constrainX) {
         // Constrain min/max pan to avoid showing off-world areas on the X axis.
-        double max_x = (scale_ * util::tileSize_D - (rotatedNorth() ? size.height : size.width)) / 2;
-        x_ = std::max(-max_x, std::min(x_, max_x));
+        const double halfX = viewX / 2;
+        x_ = std::max((0.5 - world.x1) * worldSize + halfX, std::min(x_, (0.5 - world.x0) * worldSize - halfX));
     }
 }
 

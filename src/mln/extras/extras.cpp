@@ -3,8 +3,12 @@
 #include <mln/extras/bd09mc.hpp>
 #include <mln/extras/offset.hpp>
 #include <mln/extras/tile_scheme.hpp>
+#include <mln/extras/world_bounds.hpp>
 
 #include <mln/util/logging.hpp>
+#include <mln/util/projection.hpp>
+
+#include <algorithm>
 
 #include <atomic>
 #include <mutex>
@@ -22,6 +26,7 @@ namespace {
 std::atomic<TileScheme*> activeScheme{nullptr};
 std::atomic<DatumShift*> activeShift{nullptr};
 std::atomic<PlanarProjection*> activeProjection{nullptr};
+std::atomic<WorldExtent*> activeExtent{nullptr};
 
 struct State {
     std::mutex mutex;
@@ -38,6 +43,7 @@ State& state() {
         created->extensions.push_back(std::make_unique<TileSchemeExtension>());
         created->extensions.push_back(std::make_unique<OffsetExtension>());
         created->extensions.push_back(std::make_unique<BD09MCExtension>());
+        created->extensions.push_back(std::make_unique<WorldBoundsExtension>());
         return created;
     }();
     return *instance;
@@ -71,6 +77,15 @@ void publishHooks(State& s) {
         }
     }
     activeProjection.store(projection, std::memory_order_release);
+
+    WorldExtent* extent = nullptr;
+    for (const auto& extension : s.extensions) {
+        if (auto* candidate = extension->worldExtent()) {
+            extent = candidate;
+            break;
+        }
+    }
+    activeExtent.store(extent, std::memory_order_release);
 }
 
 } // namespace
@@ -158,6 +173,34 @@ const DatumShift* datumShift() noexcept {
 
 const PlanarProjection* planarProjection() noexcept {
     return activeProjection.load(std::memory_order_acquire);
+}
+
+WorldBounds worldBounds() noexcept {
+    auto* extent = activeExtent.load(std::memory_order_acquire);
+    if (!extent) {
+        return {};
+    }
+    double w = 0.0;
+    double s = 0.0;
+    double e = 0.0;
+    double n = 0.0;
+    extent->bounds(w, s, e, n);
+    // 走 Projection 而不是自己算:偏移与投影两个 hook 会自动串上,声明的经纬度
+    // 因此就是"肉眼看到的地图边界"。scale=1 时 worldSize 即 tileSize,除掉即归一化。
+    constexpr double unitScale = 1.0;
+    const double worldSize = Projection::worldSize(unitScale);
+    const auto northWest = Projection::project(LatLng{n, w}, unitScale);
+    const auto southEast = Projection::project(LatLng{s, e}, unitScale);
+    WorldBounds out;
+    out.x0 = std::min(northWest.x, southEast.x) / worldSize;
+    out.x1 = std::max(northWest.x, southEast.x) / worldSize;
+    out.y0 = std::min(northWest.y, southEast.y) / worldSize;
+    out.y1 = std::max(northWest.y, southEast.y) / worldSize;
+    // 反常配置(投影把两角压成同一点)会让后续除法产生 inf,退回整块方块。
+    if (!(out.x1 > out.x0) || !(out.y1 > out.y0)) {
+        return {};
+    }
+    return out;
 }
 
 TileSubdivision tileSubdivision(uint8_t z, uint32_t x, uint32_t y) noexcept {
