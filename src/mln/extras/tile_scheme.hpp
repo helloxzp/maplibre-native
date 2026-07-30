@@ -5,6 +5,8 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace mln {
 namespace extras {
@@ -22,21 +24,40 @@ namespace extras {
 ///
 /// 值比键更细时无法由更粗的数据细分而来(那需要合并多张瓦片),这种条目被
 /// 当作层级下限:取瓦层级会被抬高到该值。
-class TileZoomExtension final : public Extension, private TileScheme {
+///
+/// 同时认领 `extra: { "tile-origin": "center" }`:引擎的瓦片编号是左上角原点、
+/// y 轴朝南、索引 0..2^z-1;百度官方网格以世界中心为原点、y 轴朝北、索引可负。
+/// 两者只差一个平移加翻转:`X = x - 2^(z-1)`、`Y = 2^(z-1) - 1 - y`。平移与翻转
+/// 都与四叉树运算可交换(子瓦片仍是 2p/2p+1),所以瓦片编号、父子关系、掩码
+/// 全部无需改动——这正是能与百度瓦片做到 1:1 的原因。z=0 落在半块偏移上,
+/// 数据源应声明 minzoom >= 1。
+///
+/// 同时认领 `extra: { "tile-size": 256 }`。引擎的矢量源把瓦片尺寸硬编码成
+/// 512(只有栅格源解析 style 里的 tileSize),而百度、高德等国内数据是按
+/// 256 设计的;不声明就会把 256 的瓦片拉到 512 渲染,细节层级差一级、线宽
+/// 字号全部翻倍。声明后取瓦层级整体平移 log2(512/size),与引擎原生对 256
+/// 栅格源的处理完全一致。
+class TileSchemeExtension final : public Extension, private TileScheme {
 public:
     /// 超过此层级一律透传;该上限远高于任何真实瓦片金字塔。
     static constexpr int32_t maxLevel = 30;
 
-    TileZoomExtension();
+    TileSchemeExtension();
 
-    std::string key() const override { return "tile-zoom"; }
-    bool configure(const JSValue& value) override;
+    std::vector<std::string> keys() const override { return {"tile-zoom", "tile-size", "tile-origin"}; }
+    bool configure(const std::string& key, const JSValue& value) override;
     void reset() override;
-    TileScheme* tileScheme() noexcept override { return active.load(std::memory_order_relaxed) ? this : nullptr; }
+    TileScheme* tileScheme() noexcept override {
+        return (active.load(std::memory_order_relaxed) || sizeShift.load(std::memory_order_relaxed) != 0 ||
+                centeredOrigin.load(std::memory_order_relaxed))
+                   ? this
+                   : nullptr;
+    }
 
 private:
     int32_t coveringZoom(int32_t level) const noexcept override;
     TileSubdivision subdivision(uint8_t z, uint32_t x, uint32_t y) const noexcept override;
+    void translate(uint8_t z, int64_t& x, int64_t& y) const noexcept override;
 
     /// 以 canonical 层级为下标的数据层级;`identity` 表示该层级自带数据。
     /// 用原子元素而非加锁:该表在渲染路径上被读取、在 style 加载时被改写,
@@ -44,6 +65,10 @@ private:
     static constexpr int8_t identity = -1;
     std::array<std::atomic<int8_t>, maxLevel + 1> table;
     std::atomic<bool> active{false};
+    /// log2(512/tileSize):256px 源为 +1,512px 源为 0。
+    std::atomic<int8_t> sizeShift{0};
+    /// 编号原点是否在世界中心(y 轴同时朝北),百度官方网格即如此。
+    std::atomic<bool> centeredOrigin{false};
 };
 
 } // namespace extras

@@ -106,6 +106,14 @@ Resource Resource::tile(const std::string& urlTemplate,
         y >>= sub.steps;
         z = static_cast<int8_t>(sub.dataZ);
     }
+    // hook:换算成数据源的编号约定(原点位置 / y 轴朝向),默认恒等。
+    {
+        int64_t tx = x;
+        int64_t ty = y;
+        extras::translateTileCoords(static_cast<uint8_t>(z), tx, ty);
+        x = static_cast<int32_t>(tx);
+        y = static_cast<int32_t>(ty);
+    }
     if (scheme == Tileset::Scheme::TMS) {
         y = (1 << z) - y - 1;
     }

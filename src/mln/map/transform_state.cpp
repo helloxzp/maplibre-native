@@ -1,4 +1,5 @@
 #include <mln/map/transform_state.hpp>
+#include <mln/extras/hooks.hpp>
 #include <mln/math/angles.hpp>
 #include <mln/math/clamp.hpp>
 #include <mln/math/log2.hpp>
@@ -25,9 +26,17 @@ const double maxMercatorHorizonAngle = util::deg2rad(89.25);
 
 namespace {
 LatLng latLngFromMercator(Point<double> mercatorCoordinate, LatLng::WrapMode wrapMode = LatLng::WrapMode::Unwrapped) {
-    return {util::rad2deg(2 * std::atan(std::exp(pi - mercatorCoordinate.y * 2 * pi)) - (pi / 2)),
-            mercatorCoordinate.x * 360.0 - 180.0,
-            wrapMode};
+    double lat;
+    double lng;
+    if (const auto* proj = extras::planarProjection()) {
+        proj->unproject(mercatorCoordinate.x, mercatorCoordinate.y, lng, lat);
+    } else {
+        lat = util::rad2deg(2 * std::atan(std::exp(pi - mercatorCoordinate.y * 2 * pi)) - (pi / 2));
+        lng = mercatorCoordinate.x * 360.0 - 180.0;
+    }
+    // hook:瓦片基准面 → WGS-84(见 src/mln/extras/offset.cpp)
+    if (const auto* shift = extras::datumShift()) shift->inverse(lng, lat);
+    return {lat, lng, wrapMode};
 }
 constexpr double kEpsilon = 1e-9;
 // To avoid flickering issue due to "zoom = 13.9999999..".
@@ -493,7 +502,19 @@ void TransformState::setEdgeInsets(const EdgeInsets& val) {
 // MARK: - Position
 
 LatLng TransformState::getLatLng(LatLng::WrapMode wrapMode) const {
-    return {util::rad2deg(2 * std::atan(std::exp(y / Cc)) - 0.5 * pi), -x / Bc, wrapMode};
+    double lat;
+    double lng;
+    if (const auto* proj = extras::planarProjection()) {
+        // 内部 x/y 与归一化坐标的关系:n = 0.5 - v/worldSize(两轴同式)
+        const double ws = Projection::worldSize(scale);
+        proj->unproject(0.5 - x / ws, 0.5 - y / ws, lng, lat);
+    } else {
+        lat = util::rad2deg(2 * std::atan(std::exp(y / Cc)) - 0.5 * pi);
+        lng = -x / Bc;
+    }
+    // hook:相机位置同样以瓦片基准面存储,对外还原成 WGS-84
+    if (const auto* shift = extras::datumShift()) shift->inverse(lng, lat);
+    return {lat, lng, wrapMode};
 }
 
 double TransformState::getCenterAltitude() const {
@@ -1020,13 +1041,25 @@ void TransformState::setLatLngZoom(const LatLng& latLng, double zoom) {
     Bc = newWorldSize / util::DEGREES_MAX;
     Cc = newWorldSize / util::M2PI;
 
-    const double m = 1 - 1e-15;
-    const double f = util::clamp(std::sin(util::deg2rad(constrained.latitude())), -m, m);
+    double lng = constrained.longitude();
+    double lat = constrained.latitude();
+    // hook:传入的是 WGS-84,存储前换算到瓦片基准面
+    if (const auto* shift = extras::datumShift()) shift->forward(lng, lat);
 
-    ScreenCoordinate point = {
-        -constrained.longitude() * Bc,
-        0.5 * Cc * std::log((1 + f) / (1 - f)),
-    };
+    ScreenCoordinate point;
+    if (const auto* proj = extras::planarProjection()) {
+        double nx;
+        double ny;
+        proj->project(lng, lat, nx, ny);
+        point = {(0.5 - nx) * newWorldSize, (0.5 - ny) * newWorldSize};
+    } else {
+        const double m = 1 - 1e-15;
+        const double f = util::clamp(std::sin(util::deg2rad(lat)), -m, m);
+        point = {
+            -lng * Bc,
+            0.5 * Cc * std::log((1 + f) / (1 - f)),
+        };
+    }
     setScalePoint(newScale, point);
 }
 

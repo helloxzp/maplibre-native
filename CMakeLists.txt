@@ -433,6 +433,7 @@ list(APPEND INCLUDE_FILES
     ${PROJECT_SOURCE_DIR}/include/mln/util/padding.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/util/platform.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/util/premultiply.hpp
+    ${PROJECT_SOURCE_DIR}/include/mln/extras/hooks.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/util/projection.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/util/range.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/util/rect.hpp
@@ -463,11 +464,14 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/algorithm/update_renderables.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/algorithm/update_tile_masks.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/extras/subdivided_tile_data.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/extras/bd09mc.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/extras/bd09mc.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/extras/extras.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/extras/extras.hpp
-    ${PROJECT_SOURCE_DIR}/src/mln/extras/hooks.hpp
-    ${PROJECT_SOURCE_DIR}/src/mln/extras/tile_zoom.cpp
-    ${PROJECT_SOURCE_DIR}/src/mln/extras/tile_zoom.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/extras/offset.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/extras/offset.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/extras/tile_scheme.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/extras/tile_scheme.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/annotation/annotation_manager.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/annotation/annotation_manager.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/annotation/annotation_source.cpp

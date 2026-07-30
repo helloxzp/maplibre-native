@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 /// style 根级 `extra` 字段驱动的可插拔扩展。
 ///
@@ -13,6 +14,8 @@
 ///   - `util/tile_cover.cpp`     coveringZoomLevel() 里调用 mapCoveringZoom()
 ///   - `storage/resource.cpp`    Resource::tile() 里把 URL 改指数据层级祖先
 ///   - `tile/vector_mvt_tile.cpp` setData() 里对几何做子格仿射变换
+///   - `util/projection.hpp`      经纬度 ↔ 墨卡托两个方向的基准面换算
+///   - `map/transform_state.cpp`  相机侧三处内联墨卡托的同名换算
 /// style 不含 `extra` 时,全部扩展保持复位,渲染行为与原版 MapLibre 完全一致。
 namespace mln {
 namespace extras {
@@ -28,18 +31,26 @@ class Extension {
 public:
     virtual ~Extension() = default;
 
-    /// 本扩展在 `extra` 中占用的键名,例如 "tile-zoom"。
-    virtual std::string key() const = 0;
+    /// 本扩展在 `extra` 中占用的键名。一个扩展可以认领多个相关的键
+    /// (例如层级方案同时管 "tile-zoom" 与 "tile-size"),这样它们共用
+    /// 同一份状态,不会出现两个扩展抢同一个 hook 的问题。
+    virtual std::vector<std::string> keys() const = 0;
 
-    /// 应用 `extra.<key>`。返回 false 会记录告警并保持复位状态,
+    /// 应用 `extra.<key>`。返回 false 会记录告警并把整个扩展复位,
     /// 使格式错误的 style 退化为原版行为而不是半生效。
-    virtual bool configure(const JSValue& value) = 0;
+    virtual bool configure(const std::string& key, const JSValue& value) = 0;
 
     /// 丢弃全部配置,回到原版行为。
     virtual void reset() = 0;
 
     /// 本扩展提供的稀疏层级方案;不提供则返回 nullptr。
     virtual TileScheme* tileScheme() noexcept { return nullptr; }
+
+    /// 本扩展提供的基准面偏移;不提供则返回 nullptr。
+    virtual DatumShift* datumShift() noexcept { return nullptr; }
+
+    /// 本扩展提供的平面投影;不提供则返回 nullptr。
+    virtual PlanarProjection* planarProjection() noexcept { return nullptr; }
 };
 
 /// 进程级扩展集合。

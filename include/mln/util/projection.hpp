@@ -1,5 +1,6 @@
 #pragma once
 
+#include <mln/extras/hooks.hpp>
 #include <mln/util/constants.hpp>
 #include <mln/util/geo.hpp>
 #include <mln/util/geometry.hpp>
@@ -85,15 +86,35 @@ public:
 
     static LatLng unproject(const Point<double>& p, double scale, LatLng::WrapMode wrapMode = LatLng::Unwrapped) {
         auto p2 = p * util::DEGREES_MAX / worldSize(scale);
-        return LatLng{std::atan(std::exp(util::deg2rad(util::LONGITUDE_MAX - p2.y))) * util::DEGREES_MAX / M_PI - 90.0,
-                      p2.x - util::LONGITUDE_MAX,
-                      wrapMode};
+        double lat;
+        double lng;
+        // hook:平面投影可被整体替换(如 BD09MC);未替换时用引擎原生 Web 墨卡托
+        if (const auto* proj = extras::planarProjection()) {
+            const double ws = worldSize(scale);
+            proj->unproject(p.x / ws, p.y / ws, lng, lat);
+        } else {
+            lat = std::atan(std::exp(util::deg2rad(util::LONGITUDE_MAX - p2.y))) * util::DEGREES_MAX / M_PI - 90.0;
+            lng = p2.x - util::LONGITUDE_MAX;
+        }
+        // hook:瓦片基准面(GCJ-02/BD09)→ WGS-84,见 src/mln/extras/offset.cpp
+        if (const auto* shift = extras::datumShift()) shift->inverse(lng, lat);
+        return LatLng{lat, lng, wrapMode};
     }
 
 private:
     static Point<double> project_(const LatLng& latLng, double worldSize) noexcept {
-        const double latitude = util::clamp(latLng.latitude(), -util::LATITUDE_MAX, util::LATITUDE_MAX);
-        return Point<double>{util::LONGITUDE_MAX + latLng.longitude(),
+        double lng = latLng.longitude();
+        double lat = latLng.latitude();
+        // hook:WGS-84 → 瓦片基准面,之后照常走原生 Web 墨卡托
+        if (const auto* shift = extras::datumShift()) shift->forward(lng, lat);
+        if (const auto* proj = extras::planarProjection()) {
+            double nx;
+            double ny;
+            proj->project(lng, lat, nx, ny);
+            return Point<double>{nx * worldSize, ny * worldSize};
+        }
+        const double latitude = util::clamp(lat, -util::LATITUDE_MAX, util::LATITUDE_MAX);
+        return Point<double>{util::LONGITUDE_MAX + lng,
                              util::LONGITUDE_MAX -
                                  util::rad2deg(std::log(std::tan(M_PI / 4 + latitude * M_PI / util::DEGREES_MAX)))} *
                (worldSize / util::DEGREES_MAX);
