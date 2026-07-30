@@ -2,6 +2,7 @@
 
 #include <mln/extras/bd09mc.hpp>
 #include <mln/extras/offset.hpp>
+#include <mln/extras/subdivided_tile_data.hpp>
 #include <mln/extras/tile_scheme.hpp>
 #include <mln/extras/world_bounds.hpp>
 
@@ -11,7 +12,10 @@
 #include <algorithm>
 
 #include <atomic>
+#include <cstdint>
+#include <map>
 #include <mutex>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -211,6 +215,34 @@ WorldBounds worldBounds() noexcept {
         return {};
     }
     return out;
+}
+
+namespace {
+
+/// 共享祖先几何索引的进程级注册表。只持 weak_ptr:索引的生命周期完全由持有
+/// shared_ptr 的子瓦片决定,兄弟全部释放后自动回收,注册表本身不构成缓存。
+std::mutex parentIndexMutex;
+std::map<std::tuple<std::string, uint8_t, uint32_t, uint32_t>, std::weak_ptr<ParentGeometryIndex>>
+    parentIndexRegistry;
+
+} // namespace
+
+std::shared_ptr<ParentGeometryIndex> sharedParentIndex(const std::string& sourceID,
+                                                       uint8_t dataZ,
+                                                       uint32_t ancestorX,
+                                                       uint32_t ancestorY) {
+    std::lock_guard<std::mutex> lock(parentIndexMutex);
+    // 顺手清掉失效条目;活跃祖先同时只有个位数,线性扫描可忽略。
+    for (auto it = parentIndexRegistry.begin(); it != parentIndexRegistry.end();) {
+        it = it->second.expired() ? parentIndexRegistry.erase(it) : std::next(it);
+    }
+    auto& entry = parentIndexRegistry[std::make_tuple(sourceID, dataZ, ancestorX, ancestorY)];
+    if (auto existing = entry.lock()) {
+        return existing;
+    }
+    auto created = std::make_shared<ParentGeometryIndex>();
+    entry = created;
+    return created;
 }
 
 TileSubdivision tileSubdivision(uint8_t z, uint32_t x, uint32_t y) noexcept {

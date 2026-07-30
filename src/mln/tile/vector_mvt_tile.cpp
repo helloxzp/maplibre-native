@@ -33,11 +33,17 @@ void VectorMVTTile::setData(const std::shared_ptr<const std::string>& data_) {
         if (data_) {
             data = std::make_unique<VectorMVTTileData>(data_);
             // hook:本瓦片取的是祖先数据瓦片时,把几何缩放平移到本瓦片的子格
-            // 范围内(层级复用,见 src/mln/extras)。
+            // 范围内(层级复用,见 src/mln/extras)。兄弟子瓦片经共享祖先索引
+            // 复用同一次几何解码与包围盒扫描。
             if (const auto sub = extras::tileSubdivision(id.canonical.z, id.canonical.x, id.canonical.y);
                 sub.steps > 0) {
                 data = std::make_unique<extras::SubdividedGeometryTileData>(
-                    std::move(data), sub.steps, sub.offX, sub.offY);
+                    std::move(data),
+                    sub.steps,
+                    sub.offX,
+                    sub.offY,
+                    extras::sharedParentIndex(
+                        sourceID, sub.dataZ, id.canonical.x >> sub.steps, id.canonical.y >> sub.steps));
             }
         }
         GeometryTile::setData(std::move(data));
