@@ -55,6 +55,9 @@ public:
 
     /// 本扩展声明的世界范围;不声明则返回 nullptr(相机按整块方块约束)。
     virtual WorldExtent* worldExtent() noexcept { return nullptr; }
+
+    /// 本扩展提供的取瓦网格映射;不提供则返回 nullptr(取瓦与显示同一套坐标)。
+    virtual TileGridMapper* tileGridMapper() noexcept { return nullptr; }
 };
 
 /// 进程级扩展集合。

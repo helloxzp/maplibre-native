@@ -128,6 +128,8 @@ MLN_CORE_SOURCE = [
     "src/mln/extras/extras.hpp",
     "src/mln/extras/offset.cpp",
     "src/mln/extras/offset.hpp",
+    "src/mln/extras/tile_grid.cpp",
+    "src/mln/extras/tile_grid.hpp",
     "src/mln/extras/tile_scheme.cpp",
     "src/mln/extras/tile_scheme.hpp",
     "src/mln/extras/world_bounds.cpp",

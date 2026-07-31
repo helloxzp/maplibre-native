@@ -48,6 +48,10 @@ public:
     /// 把引擎的瓦片编号换算成数据源的编号(原点位置与 y 轴朝向的约定)。
     /// 默认恒等;百度一类以世界中心为原点、y 轴朝北的网格需要平移加翻转。
     virtual void translate(uint8_t z, int64_t& x, int64_t& y) const noexcept = 0;
+
+    /// 渲染清单是否改由"瓦片桶的存在"决定(extra.layer-zoom-gate: "tile")。
+    /// 只适用于 per-level 样式表;常规 zoom 门控的样式必须保持 false(默认)。
+    virtual bool layerZoomGateByTile() const noexcept { return false; }
 };
 
 /// 经纬度基准面偏移。
@@ -67,6 +71,40 @@ public:
     /// 瓦片基准面 → WGS-84。就地修改。
     virtual void inverse(double& lng, double& lat) const noexcept = 0;
 };
+
+/// 取瓦网格与显示世界不是同一套坐标时的数据层适配(dual-fetch 架构)。
+///
+/// 高德 JSAPI 矢量瓦片按**度数网格**索引(等距柱面,行线性于纬度),官方显示是
+/// **墨卡托**。mln 的渲染器深度假设瓦片框各向同性(字形四边形、线宽挤出、AA
+/// 渐变、SDF 采样都在瓦片单位里按两轴等比算),把度数瓦片直接摆进墨卡托世界
+/// 会系统性发虚/斜切(真机验证过)。因此本扩展**不碰渲染侧**:瓦片 ID 保持
+/// 原生墨卡托槽位,一切在数据层解决——
+///   - 一张墨卡托瓦片的纬度带覆盖 2·cos(纬度) ≤ 2 个度数行(中国区约 1.4~1.9,
+///     错位时最多跨 3 行),加载层对同列的这 1~3 个度数行各发一个请求;
+///   - 到齐后在 setData 层合成:每个度数行先走稀疏层级子分(复用现有机械),
+///     再经"度数-local → 墨卡托-local"的非线性 y warp 与裁剪,拼进墨卡托瓦
+///     片的本地框(见 tile_grid.hpp);
+///   - 渲染、覆盖、查询、符号全部走原生路径,零改动。
+///
+/// 首行(leg0)沿用引擎自身的 TileLoader:Resource::tile() 里把墨卡托行号换成
+/// 覆盖其北缘的度数行;其余行由 extras 的 sidecar 自行请求。
+class TileGridMapper {
+public:
+    virtual ~TileGridMapper() = default;
+
+    /// 墨卡托瓦片 (z,y) 的纬度带覆盖的度数行区间 [r0,r1](闭区间,已钳制)。
+    virtual void sourceRows(uint8_t z, uint32_t y, uint32_t& r0, uint32_t& r1) const noexcept = 0;
+};
+
+/// 当前是否有取瓦网格映射生效。
+bool tileGridActive() noexcept;
+
+/// leg0:墨卡托行 y 的北缘所在度数行;无扩展生效时原样返回 y。
+/// Resource::tile() 在子分重映射之前调用。
+uint32_t tileGridLeg0Row(uint8_t z, uint32_t y) noexcept;
+
+/// 墨卡托瓦片覆盖的度数行区间;无扩展生效时 r0=r1=y。
+void tileGridSourceRows(uint8_t z, uint32_t y, uint32_t& r0, uint32_t& r1) noexcept;
 
 /// 经纬度到归一化世界坐标的平面投影。
 ///

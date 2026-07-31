@@ -226,7 +226,11 @@ void ProjectionExtension::project(double lng, double lat, double& x, double& y) 
 void ProjectionExtension::unproject(double x, double y, double& lng, double& lat) const noexcept {
     if (mode.load(std::memory_order_relaxed) == Mode::PlateCarree) {
         lng = x * 360.0 - 180.0;
-        lat = 90.0 - y * 180.0;
+        // 必须钳制:等距柱面的反投影是线性外推,屏幕角点因浮点误差(或世界比
+        // 视口小时的界外像素)会让 y 微越 [0,1],算出 |lat|>90 —— Android SDK 的
+        // LatLng 构造器对此直接抛 java.lang.Error。墨卡托从不炸是因为
+        // atan(sinh(·)) 渐近钳在 ±85.05°,线性投影没有这层天然保护。
+        lat = std::clamp(90.0 - y * 180.0, -90.0, 90.0);
         return;
     }
     lng = (x - 0.5) * worldMeters / kMetersPerDegree;
@@ -242,7 +246,8 @@ void ProjectionExtension::unproject(double x, double y, double& lng, double& lat
         if (slope == 0.0) break;
         guess += (mcY - mcYfromLat(guess)) / slope;
     }
-    lat = guess;
+    // 同 plate-carree 分支:界外 y 经带外多项式外推也可能越界,统一钳制。
+    lat = std::clamp(guess, -90.0, 90.0);
 }
 
 } // namespace extras

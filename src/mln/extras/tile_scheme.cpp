@@ -58,12 +58,31 @@ void TileSchemeExtension::reset() {
         entry.store(identity, std::memory_order_relaxed);
     }
     aliased.store(false, std::memory_order_relaxed);
+    gateByTile.store(false, std::memory_order_relaxed);
     sizeShift.store(0, std::memory_order_relaxed);
     centeredOrigin.store(false, std::memory_order_relaxed);
     active.store(false, std::memory_order_release);
 }
 
 bool TileSchemeExtension::configure(const std::string& key, const JSValue& value) {
+    if (key == "layer-zoom-gate") {
+        if (!value.IsString()) {
+            Log::Warning(Event::ParseStyle, "extra.layer-zoom-gate 必须是字符串:\"tile\" / \"camera\"");
+            return false;
+        }
+        const std::string_view name{value.GetString(), value.GetStringLength()};
+        if (name == "tile") {
+            gateByTile.store(true, std::memory_order_release);
+            return true;
+        }
+        if (name == "camera") {
+            gateByTile.store(false, std::memory_order_release);
+            return true;
+        }
+        Log::Warning(Event::ParseStyle, "extra.layer-zoom-gate 取值无法识别:" + std::string(name));
+        return false;
+    }
+
     if (key == "tile-origin") {
         if (!value.IsString()) {
             Log::Warning(Event::ParseStyle, "extra.tile-origin 必须是字符串:\"center\" / \"topleft\"");

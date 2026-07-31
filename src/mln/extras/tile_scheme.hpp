@@ -63,7 +63,9 @@ public:
 
     TileSchemeExtension();
 
-    std::vector<std::string> keys() const override { return {"tile-levels", "tile-size", "tile-origin"}; }
+    std::vector<std::string> keys() const override {
+        return {"tile-levels", "tile-size", "tile-origin", "layer-zoom-gate"};
+    }
     bool configure(const std::string& key, const JSValue& value) override;
     void reset() override;
     TileScheme* tileScheme() noexcept override {
@@ -92,6 +94,18 @@ private:
     std::atomic<bool> centeredOrigin{false};
     /// 四叉树层级 → URL 中的层级标签;`identity` 表示直接用四叉树层级。
     std::array<std::atomic<int8_t>, maxLevel + 1> levelIds;
+
+public:
+    /// `extra: { "layer-zoom-gate": "tile" }` —— 渲染清单不再按相机 zoom 隐藏
+    /// 图层,改由"哪些瓦片有它的桶"决定(桶本就按瓦片自身层级建)。只适用于
+    /// **per-level 样式表**(每级图层用 zoom 钳制绑定数据层级,如百度):跨级
+    /// 过渡时 retained 旧级瓦片才能由旧级表继续正确着色(消闪白)。常规 zoom
+    /// 门控的样式(如高德,minzoom 控制标签密度)绝不能开,否则所有层级的
+    /// 标签会同时涌出。默认 "camera"(原版行为)。
+    bool layerZoomGateByTile() const noexcept override { return gateByTile.load(std::memory_order_relaxed); }
+
+private:
+    std::atomic<bool> gateByTile{false};
 };
 
 } // namespace extras

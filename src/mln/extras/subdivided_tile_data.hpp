@@ -240,6 +240,11 @@ std::shared_ptr<ParentGeometryIndex> sharedParentIndex(const std::string& source
                                                        uint32_t ancestorX,
                                                        uint32_t ancestorY);
 
+/// 稀疏层级复用的瓦片数据适配:steps>0 时包子分装饰器(携兄弟共享索引),
+/// 否则原样返回。实现在 extras.cpp。
+std::unique_ptr<GeometryTileData> adaptTileData(
+    std::unique_ptr<GeometryTileData> data, uint8_t z, uint32_t x, uint32_t y, const std::string& sourceID);
+
 /// 客户端"层级复用":一个瓦片直接渲染其祖先数据瓦片的几何——坐标按 2^steps
 /// 放大,再平移到本瓦片对应的子矩形。纯仿射变换,不涉及重投影,因此无接缝。
 ///

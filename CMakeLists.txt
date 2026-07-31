@@ -470,6 +470,8 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/extras/extras.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/extras/offset.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/extras/offset.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/extras/tile_grid.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/extras/tile_grid.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/extras/tile_scheme.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/extras/tile_scheme.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/extras/world_bounds.cpp

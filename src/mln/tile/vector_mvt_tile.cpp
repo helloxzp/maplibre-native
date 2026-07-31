@@ -1,7 +1,6 @@
 #include <mln/tile/vector_mvt_tile.hpp>
 
-#include <mln/extras/hooks.hpp>
-#include <mln/extras/subdivided_tile_data.hpp>
+#include <mln/extras/tile_grid.hpp>
 
 #include <mln/renderer/tile_parameters.hpp>
 #include <mln/tile/tile_loader_impl.hpp>
@@ -16,9 +15,31 @@ VectorMVTTile::VectorMVTTile(const OverscaledTileID& id_,
                              const TileParameters& parameters_,
                              const Tileset& tileset_,
                              TileObserver* observer_)
-    : VectorTile(id_, std::move(sourceID_), parameters_, tileset_, observer_) {}
+    : VectorTile(id_, std::move(sourceID_), parameters_, tileset_, observer_) {
+    // hook:tile-grid 生效时,一张墨卡托瓦片的纬度带覆盖多个度数行,leg0 走本类
+    // 自身的 TileLoader(URL 已在 Resource::tile 里换成北缘度数行),其余行由
+    // sidecar 请求;全部到位后在 setData 合成。
+    if (extras::tileGridActive() && !tileset_.tiles.empty()) {
+        gridFetch = std::make_unique<extras::TileGridDualFetch>(
+            parameters_.fileSource,
+            tileset_.tiles.at(0),
+            parameters_.pixelRatio,
+            static_cast<uint8_t>(tileset_.scheme),
+            sourceID,
+            id.canonical.z,
+            id.canonical.x,
+            id.canonical.y,
+            [this] {
+                if (!obsolete && gridFetch && gridFetch->ready()) {
+                    GeometryTile::setData(gridFetch->build());
+                }
+            });
+    }
+}
 
 VectorMVTTile::~VectorMVTTile() {
+    // 先撤 sidecar(取消未完成的 leg 请求),再撤 loader。
+    gridFetch.reset();
     // this needs to be explicitly deleted in the most-derived destructor
     loader.reset();
 
@@ -28,26 +49,24 @@ VectorMVTTile::~VectorMVTTile() {
 }
 
 void VectorMVTTile::setData(const std::shared_ptr<const std::string>& data_) {
-    if (!obsolete) {
-        std::unique_ptr<GeometryTileData> data;
-        if (data_) {
-            data = std::make_unique<VectorMVTTileData>(data_);
-            // hook:本瓦片取的是祖先数据瓦片时,把几何缩放平移到本瓦片的子格
-            // 范围内(层级复用,见 src/mln/extras)。兄弟子瓦片经共享祖先索引
-            // 复用同一次几何解码与包围盒扫描。
-            if (const auto sub = extras::tileSubdivision(id.canonical.z, id.canonical.x, id.canonical.y);
-                sub.steps > 0) {
-                data = std::make_unique<extras::SubdividedGeometryTileData>(
-                    std::move(data),
-                    sub.steps,
-                    sub.offX,
-                    sub.offY,
-                    extras::sharedParentIndex(
-                        sourceID, sub.dataZ, id.canonical.x >> sub.steps, id.canonical.y >> sub.steps));
-            }
-        }
-        GeometryTile::setData(std::move(data));
+    if (obsolete) {
+        return;
     }
+    if (gridFetch) {
+        // tile-grid 模式:字节交给 sidecar 作为 leg0,凑齐全部度数行后合成。
+        gridFetch->setLeg0(data_);
+        if (gridFetch->ready()) {
+            GeometryTile::setData(gridFetch->build());
+        }
+        return;
+    }
+    std::unique_ptr<GeometryTileData> data;
+    if (data_) {
+        data = std::make_unique<VectorMVTTileData>(data_);
+        // hook:稀疏层级复用(子分 + 兄弟共享索引),无扩展生效时原样返回。
+        data = extras::adaptTileData(std::move(data), id.canonical.z, id.canonical.x, id.canonical.y, sourceID);
+    }
+    GeometryTile::setData(std::move(data));
 }
 
 } // namespace mln

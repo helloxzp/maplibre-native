@@ -3,6 +3,7 @@
 #include <mln/extras/projection.hpp>
 #include <mln/extras/offset.hpp>
 #include <mln/extras/subdivided_tile_data.hpp>
+#include <mln/extras/tile_grid.hpp>
 #include <mln/extras/tile_scheme.hpp>
 #include <mln/extras/world_bounds.hpp>
 
@@ -31,6 +32,7 @@ std::atomic<TileScheme*> activeScheme{nullptr};
 std::atomic<DatumShift*> activeShift{nullptr};
 std::atomic<PlanarProjection*> activeProjection{nullptr};
 std::atomic<WorldExtent*> activeExtent{nullptr};
+std::atomic<TileGridMapper*> activeGridMapper{nullptr};
 
 struct State {
     std::mutex mutex;
@@ -48,6 +50,7 @@ State& state() {
         created->extensions.push_back(std::make_unique<OffsetExtension>());
         created->extensions.push_back(std::make_unique<ProjectionExtension>());
         created->extensions.push_back(std::make_unique<WorldBoundsExtension>());
+        created->extensions.push_back(std::make_unique<TileGridExtension>());
         return created;
     }();
     return *instance;
@@ -90,6 +93,15 @@ void publishHooks(State& s) {
         }
     }
     activeExtent.store(extent, std::memory_order_release);
+
+    TileGridMapper* gridMapper = nullptr;
+    for (const auto& extension : s.extensions) {
+        if (auto* candidate = extension->tileGridMapper()) {
+            gridMapper = candidate;
+            break;
+        }
+    }
+    activeGridMapper.store(gridMapper, std::memory_order_release);
 }
 
 } // namespace
@@ -184,9 +196,48 @@ bool worldWrapDisabled() noexcept {
     return activeExtent.load(std::memory_order_acquire) != nullptr;
 }
 
+bool tileGridActive() noexcept {
+    return activeGridMapper.load(std::memory_order_acquire) != nullptr;
+}
+
+uint32_t tileGridLeg0Row(uint8_t z, uint32_t y) noexcept {
+    // sidecar 组装其余 leg 的 URL 时走旁路:传入的 y 已是度数行,不能再映射。
+    if (tileGridResourceBypassed()) {
+        return y;
+    }
+    if (auto* mapper = activeGridMapper.load(std::memory_order_acquire)) {
+        uint32_t r0 = y;
+        uint32_t r1 = y;
+        mapper->sourceRows(z, y, r0, r1);
+        return r0;
+    }
+    return y;
+}
+
+void tileGridSourceRows(uint8_t z, uint32_t y, uint32_t& r0, uint32_t& r1) noexcept {
+    r0 = y;
+    r1 = y;
+    if (auto* mapper = activeGridMapper.load(std::memory_order_acquire)) {
+        mapper->sourceRows(z, y, r0, r1);
+    }
+}
+
+std::unique_ptr<GeometryTileData> adaptTileData(
+    std::unique_ptr<GeometryTileData> data, uint8_t z, uint32_t x, uint32_t y, const std::string& sourceID) {
+    if (const auto sub = tileSubdivision(z, x, y); sub.steps > 0) {
+        data = std::make_unique<SubdividedGeometryTileData>(
+            std::move(data), sub.steps, sub.offX, sub.offY, sharedParentIndex(sourceID, sub.dataZ, x >> sub.steps, y >> sub.steps));
+    }
+    return data;
+}
+
 bool renderZoomGateDisabled() noexcept {
-    // 稀疏层级方案生效即放开渲染侧的相机 zoom 图层闸门(见 hooks.hpp 注释)。
-    return activeScheme.load(std::memory_order_acquire) != nullptr;
+    // 只有 style 显式声明 layer-zoom-gate:"tile" 才放开(per-level 样式表专用,
+    // 见 hooks.hpp 注释);常规 zoom 门控的样式保持原版行为。
+    if (auto* scheme = activeScheme.load(std::memory_order_acquire)) {
+        return scheme->layerZoomGateByTile();
+    }
+    return false;
 }
 
 WorldBounds worldBounds() noexcept {
