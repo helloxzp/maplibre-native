@@ -252,7 +252,7 @@ TileGridDualFetch::TileGridDualFetch(std::shared_ptr<FileSource> fileSource_,
 
 TileGridDualFetch::~TileGridDualFetch() = default;
 
-void TileGridDualFetch::setLeg0(std::shared_ptr<const std::string> data) {
+void TileGridDualFetch::setPrimaryData(std::shared_ptr<const std::string> data) {
     leg0Set = true;
     legs.front().done = true;
     legs.front().data = std::move(data);
@@ -307,6 +307,23 @@ std::unique_ptr<GeometryTileData> TileGridDualFetch::build() const {
         return std::move(parts.front());
     }
     return std::make_unique<ComposedGeometryTileData>(std::move(parts));
+}
+
+std::unique_ptr<TileDataSource> makeTileDataSource(std::shared_ptr<FileSource> fileSource,
+                                                   const std::string& urlTemplate,
+                                                   float pixelRatio,
+                                                   uint8_t scheme,
+                                                   const std::string& sourceID,
+                                                   uint8_t z,
+                                                   uint32_t x,
+                                                   uint32_t y,
+                                                   std::function<void()> onDataArrived) {
+    // 目前只有 tile-grid 需要额外的数据源;其余情况上游走原生路径。
+    if (!tileGridActive() || urlTemplate.empty()) {
+        return nullptr;
+    }
+    return std::make_unique<TileGridDualFetch>(
+        std::move(fileSource), urlTemplate, pixelRatio, scheme, sourceID, z, x, y, std::move(onDataArrived));
 }
 
 } // namespace extras

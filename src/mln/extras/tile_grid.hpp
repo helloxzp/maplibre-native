@@ -163,7 +163,7 @@ private:
 /// 过期刷新),字节经 setLeg0() 注入;其余行由本类经 FileSource 一次性请求
 /// (LoadingMethod::All)。全部到位(或失败置空)后 ready() 为真,build() 产出
 /// 合成数据。所有回调都在创建线程(Map 线程)上,无需加锁。
-class TileGridDualFetch {
+class TileGridDualFetch final : public TileDataSource {
 public:
     TileGridDualFetch(std::shared_ptr<FileSource> fileSource,
                       std::string urlTemplate,
@@ -177,14 +177,14 @@ public:
     ~TileGridDualFetch();
 
     /// 注入 leg0(引擎 TileLoader 的字节;nullptr = 空瓦片/无数据)。
-    void setLeg0(std::shared_ptr<const std::string> data);
+    void setPrimaryData(std::shared_ptr<const std::string> data) override;
 
     /// leg0 已注入且其余行都已返回(成功或失败)。
-    bool ready() const noexcept;
+    bool ready() const noexcept override;
 
     /// 合成当前已有的各 leg。至少 leg0 已注入时可调用;失败的 leg 跳过。
     /// 返回 nullptr 表示所有 leg 都为空。
-    std::unique_ptr<GeometryTileData> build() const;
+    std::unique_ptr<GeometryTileData> build() const override;
 
 private:
     struct Leg {

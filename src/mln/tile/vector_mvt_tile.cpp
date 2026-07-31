@@ -1,6 +1,6 @@
 #include <mln/tile/vector_mvt_tile.hpp>
 
-#include <mln/extras/tile_grid.hpp>
+#include <mln/extras/hooks.hpp>
 
 #include <mln/renderer/tile_parameters.hpp>
 #include <mln/tile/tile_loader_impl.hpp>
@@ -19,27 +19,26 @@ VectorMVTTile::VectorMVTTile(const OverscaledTileID& id_,
     // hook:tile-grid 生效时,一张墨卡托瓦片的纬度带覆盖多个度数行,leg0 走本类
     // 自身的 TileLoader(URL 已在 Resource::tile 里换成北缘度数行),其余行由
     // sidecar 请求;全部到位后在 setData 合成。
-    if (extras::tileGridActive() && !tileset_.tiles.empty()) {
-        gridFetch = std::make_unique<extras::TileGridDualFetch>(
-            parameters_.fileSource,
-            tileset_.tiles.at(0),
-            parameters_.pixelRatio,
-            static_cast<uint8_t>(tileset_.scheme),
-            sourceID,
-            id.canonical.z,
-            id.canonical.x,
-            id.canonical.y,
-            [this] {
-                if (!obsolete && gridFetch && gridFetch->ready()) {
-                    GeometryTile::setData(gridFetch->build());
-                }
-            });
+    if (!tileset_.tiles.empty()) {
+        dataSource = extras::makeTileDataSource(parameters_.fileSource,
+                                                tileset_.tiles.at(0),
+                                                parameters_.pixelRatio,
+                                                static_cast<uint8_t>(tileset_.scheme),
+                                                sourceID,
+                                                id.canonical.z,
+                                                id.canonical.x,
+                                                id.canonical.y,
+                                                [this] {
+                                                    if (!obsolete && dataSource && dataSource->ready()) {
+                                                        GeometryTile::setData(dataSource->build());
+                                                    }
+                                                });
     }
 }
 
 VectorMVTTile::~VectorMVTTile() {
-    // 先撤 sidecar(取消未完成的 leg 请求),再撤 loader。
-    gridFetch.reset();
+    // 先撤 extras 数据源(取消其未完成的请求),再撤 loader。
+    dataSource.reset();
     // this needs to be explicitly deleted in the most-derived destructor
     loader.reset();
 
@@ -52,11 +51,11 @@ void VectorMVTTile::setData(const std::shared_ptr<const std::string>& data_) {
     if (obsolete) {
         return;
     }
-    if (gridFetch) {
-        // tile-grid 模式:字节交给 sidecar 作为 leg0,凑齐全部度数行后合成。
-        gridFetch->setLeg0(data_);
-        if (gridFetch->ready()) {
-            GeometryTile::setData(gridFetch->build());
+    if (dataSource) {
+        // extras 接管:字节交给它,所需数据齐备后合成。
+        dataSource->setPrimaryData(data_);
+        if (dataSource->ready()) {
+            GeometryTile::setData(dataSource->build());
         }
         return;
     }

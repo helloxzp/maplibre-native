@@ -1,5 +1,6 @@
 #pragma once
 
+#include <mln/extras/hooks.hpp>
 #include <mln/tile/geometry_tile.hpp>
 #include <mln/tile/tile_loader.hpp>
 #include <mln/tile/vector_tile.hpp>
@@ -7,10 +8,6 @@
 #include <memory>
 
 namespace mln {
-
-namespace extras {
-class TileGridDualFetch;
-} // namespace extras
 
 class Tileset;
 class TileParameters;
@@ -28,8 +25,8 @@ public:
     void setData(const std::shared_ptr<const std::string>& data) override;
 
 private:
-    /// tile-grid(度数网格取瓦)生效时的多行取瓦 sidecar;详见 extras/tile_grid.hpp。
-    std::unique_ptr<extras::TileGridDualFetch> gridFetch;
+    /// extras 提供的瓦片数据源(需要额外取瓦/变换时非空);见 extras/hooks.hpp。
+    std::unique_ptr<extras::TileDataSource> dataSource;
 };
 
 } // namespace mln

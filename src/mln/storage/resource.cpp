@@ -98,7 +98,7 @@ Resource Resource::tile(const std::string& urlTemplate,
     bool supportsRatio = urlTemplate.find("{ratio}") != std::string::npos;
     // hook:稀疏金字塔中,本层级若无数据则改取祖先数据瓦片(见 src/mln/extras);
     // hook:tile-grid 生效时,本瓦片(墨卡托槽位)的 leg0 = 覆盖其北缘的度数行;
-    // 其余度数行由 extras 的 sidecar 自行请求(见 src/mln/extras/tile_grid.hpp)。
+    // 其余度数行由 extras 的数据源自行请求(见 extras/hooks.hpp 的 TileDataSource)。
     y = static_cast<int32_t>(extras::tileGridLeg0Row(static_cast<uint8_t>(z), static_cast<uint32_t>(y)));
     // 多个 canonical 瓦片会命中同一 URL,由 HTTP 缓存去重。
     if (const auto sub = extras::tileSubdivision(static_cast<uint8_t>(z),

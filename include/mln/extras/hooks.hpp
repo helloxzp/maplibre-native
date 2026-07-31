@@ -1,12 +1,20 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
 
 /// 引擎侧 hook 调用点包含的头文件。
 ///
-/// 这里刻意不引入 rapidjson 等配置期依赖:被 hook 的上游文件只需要看到
-/// "当前是否有扩展生效"这一件事,配置与注册相关的接口在 extras.hpp 中。
+/// 这里刻意不引入 rapidjson 等配置期依赖,也不暴露任何具体扩展的类型:被 hook
+/// 的上游文件**只需 include 本头文件**,看到的全是"当前是否有扩展生效"与不透明
+/// 接口。配置与注册在 extras.hpp,各扩展的实现细节在各自的 .hpp 中。
 namespace mln {
+
+class GeometryTileData;
+class FileSource;
+
 namespace extras {
 
 /// 一个瓦片相对其数据来源瓦片的关系。
@@ -71,6 +79,44 @@ public:
     /// 瓦片基准面 → WGS-84。就地修改。
     virtual void inverse(double& lng, double& lat) const noexcept = 0;
 };
+
+/// 瓦片数据源:把"一张引擎瓦片的字节 → 可渲染的 GeometryTileData"这一步交给
+/// extras,使上游不必知道任何扩展类型。
+///
+/// 无扩展生效时 `makeTileDataSource()` 返回 nullptr,上游走原生路径;返回非空
+/// 时上游把 TileLoader 拿到的字节交给 `setPrimaryData()`,`ready()` 为真后调
+/// `build()` 取合成结果。实现可以在内部再发请求(dual-fetch 的其余度数行),
+/// 到货时通过构造时传入的回调通知上游。
+class TileDataSource {
+public:
+    virtual ~TileDataSource() = default;
+
+    /// 注入引擎 TileLoader 取到的字节(nullptr = 空瓦片)。
+    virtual void setPrimaryData(std::shared_ptr<const std::string> data) = 0;
+
+    /// 全部所需数据是否到位(成功或失败均计)。
+    virtual bool ready() const noexcept = 0;
+
+    /// 合成当前已有数据;全空时返回 nullptr。
+    virtual std::unique_ptr<GeometryTileData> build() const = 0;
+};
+
+/// 稀疏层级复用的瓦片数据适配:本瓦片取的是祖先数据瓦片时(steps>0)包一层
+/// 子分装饰器(几何按子格仿射 + 裁剪,兄弟共享祖先包围盒索引);否则原样返回。
+std::unique_ptr<GeometryTileData> adaptTileData(
+    std::unique_ptr<GeometryTileData> data, uint8_t z, uint32_t x, uint32_t y, const std::string& sourceID);
+
+/// 为一张引擎瓦片创建数据源;不需要额外处理时返回 nullptr(上游走原生路径)。
+/// `onDataArrived` 在实现内部异步取到数据后于同一线程回调。
+std::unique_ptr<TileDataSource> makeTileDataSource(std::shared_ptr<FileSource> fileSource,
+                                                   const std::string& urlTemplate,
+                                                   float pixelRatio,
+                                                   uint8_t scheme,
+                                                   const std::string& sourceID,
+                                                   uint8_t z,
+                                                   uint32_t x,
+                                                   uint32_t y,
+                                                   std::function<void()> onDataArrived);
 
 /// 取瓦网格与显示世界不是同一套坐标时的数据层适配(dual-fetch 架构)。
 ///
