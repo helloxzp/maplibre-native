@@ -1,4 +1,4 @@
-#include <mln/extras/bd09mc.hpp>
+#include <mln/extras/projection.hpp>
 
 #include <mln/util/logging.hpp>
 
@@ -185,35 +185,50 @@ double latFromMcY(double mcY) {
 
 } // namespace
 
-bool BD09MCExtension::configure(const std::string&, const JSValue& value) {
+bool ProjectionExtension::configure(const std::string&, const JSValue& value) {
     if (!value.IsString()) {
-        Log::Warning(Event::ParseStyle, "extra.projection 必须是字符串:\"bd09mc\" / \"mercator\"");
+        Log::Warning(Event::ParseStyle, "extra.projection 必须是字符串:\"bd09mc\" / \"plate-carree\" / \"mercator\"");
         return false;
     }
     const std::string_view name{value.GetString(), value.GetStringLength()};
     if (name == "bd09mc") {
-        active.store(true, std::memory_order_release);
+        mode.store(Mode::BD09MC, std::memory_order_release);
+        return true;
+    }
+    if (name == "plate-carree" || name == "platecarree" || name == "equirectangular") {
+        mode.store(Mode::PlateCarree, std::memory_order_release);
         return true;
     }
     if (name == "mercator" || name == "webmercator") {
-        active.store(false, std::memory_order_release);
+        mode.store(Mode::Mercator, std::memory_order_release);
         return true;
     }
     Log::Warning(Event::ParseStyle, "extra.projection 取值无法识别:" + std::string(name));
     return false;
 }
 
-void BD09MCExtension::reset() {
-    active.store(false, std::memory_order_release);
+void ProjectionExtension::reset() {
+    mode.store(Mode::Mercator, std::memory_order_release);
 }
 
-void BD09MCExtension::project(double lng, double lat, double& x, double& y) const noexcept {
+void ProjectionExtension::project(double lng, double lat, double& x, double& y) const noexcept {
+    if (mode.load(std::memory_order_relaxed) == Mode::PlateCarree) {
+        // 等距柱面:两轴都是线性映射,世界恰好铺满 [0,1]²,闭式精确可逆。
+        x = (lng + 180.0) / 360.0;
+        y = (90.0 - lat) / 180.0;
+        return;
+    }
     // 归一化原点在西北角:x 向东为正,y 向南为正,而 BD09MC 的 y 向北为正。
     x = 0.5 + lng * kMetersPerDegree / worldMeters;
     y = 0.5 - mcYfromLat(lat) / worldMeters;
 }
 
-void BD09MCExtension::unproject(double x, double y, double& lng, double& lat) const noexcept {
+void ProjectionExtension::unproject(double x, double y, double& lng, double& lat) const noexcept {
+    if (mode.load(std::memory_order_relaxed) == Mode::PlateCarree) {
+        lng = x * 360.0 - 180.0;
+        lat = 90.0 - y * 180.0;
+        return;
+    }
     lng = (x - 0.5) * worldMeters / kMetersPerDegree;
 
     // LL2MC 与 MC2LL 是两套独立拟合,并非严格互逆,直接用 MC2LL 会留下约

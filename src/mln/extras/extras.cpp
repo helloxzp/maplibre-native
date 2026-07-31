@@ -1,6 +1,6 @@
 #include <mln/extras/extras.hpp>
 
-#include <mln/extras/bd09mc.hpp>
+#include <mln/extras/projection.hpp>
 #include <mln/extras/offset.hpp>
 #include <mln/extras/subdivided_tile_data.hpp>
 #include <mln/extras/tile_scheme.hpp>
@@ -46,7 +46,7 @@ State& state() {
         auto* created = new State();
         created->extensions.push_back(std::make_unique<TileSchemeExtension>());
         created->extensions.push_back(std::make_unique<OffsetExtension>());
-        created->extensions.push_back(std::make_unique<BD09MCExtension>());
+        created->extensions.push_back(std::make_unique<ProjectionExtension>());
         created->extensions.push_back(std::make_unique<WorldBoundsExtension>());
         return created;
     }();

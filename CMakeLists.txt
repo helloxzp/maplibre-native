@@ -464,8 +464,8 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/algorithm/update_renderables.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/algorithm/update_tile_masks.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/extras/subdivided_tile_data.hpp
-    ${PROJECT_SOURCE_DIR}/src/mln/extras/bd09mc.cpp
-    ${PROJECT_SOURCE_DIR}/src/mln/extras/bd09mc.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/extras/projection.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/extras/projection.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/extras/extras.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/extras/extras.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/extras/offset.cpp
