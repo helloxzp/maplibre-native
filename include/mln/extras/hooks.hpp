@@ -22,9 +22,20 @@ namespace extras {
 /// 稀疏金字塔中,瓦片网格保持每级 2× 的稠密排列(过渡才能平滑),而数据只在
 /// 部分层级存在,因此中间层级的瓦片改为取用祖先数据瓦片、再做仿射变换。
 struct TileSubdivision {
-    uint8_t dataZ = 0;  ///< 实际请求的数据层级
-    uint8_t steps = 0;  ///< 层级差 z - dataZ;为 0 表示本层级自带数据,无需变换
-    uint32_t offX = 0;  ///< 本瓦片在数据瓦片内的子格坐标(0..2^steps-1)
+    uint8_t dataZ = 0; ///< 实际请求的数据层级
+    /// 层级差 z - dataZ。0 = 本层级自带数据,无需变换。
+    ///
+    /// **正数**:数据比本瓦片更粗,本瓦片是祖先瓦片的一个子格 —— 放大 2^steps
+    /// 倍、平移、裁剪(`SubdividedGeometryTileData`)。
+    ///
+    /// **负数**:数据比本瓦片更细,本瓦片**包含** 2^|steps| × 2^|steps| 张数据
+    /// 瓦片 —— 逐张缩小 2^|steps| 倍、平移进各自子格,再拼合
+    /// (`MergedGeometryTileData` + `ComposedGeometryTileData`)。这条路让稀疏
+    /// 金字塔在**最粗一档以下**也保持网格稠密,`coveringZoom` 因此不必抬高取瓦
+    /// 层级 —— 抬高会把多个显示层级塌到同一批瓦片上,而 `SymbolLayout` 对每张
+    /// 瓦片只求值一次图层 filter,那几级的按层级门就再也分不开了。
+    int8_t steps = 0;
+    uint32_t offX = 0; ///< steps>0 时本瓦片在数据瓦片内的子格坐标(0..2^steps-1)
     uint32_t offY = 0;
 };
 
@@ -99,6 +110,15 @@ public:
 
     /// 合成当前已有数据;全空时返回 nullptr。
     virtual std::unique_ptr<GeometryTileData> build() const = 0;
+
+    /// 是否允许用"当前已有的那部分"先出图(渐进式),不必等 ready()。
+    ///
+    /// 默认否:多数场景的分片几乎同时到达,先画半张反而更难看。负子分是例外
+    /// ——它要等齐 4/16 张源瓦片,全或无会让世界视图整块整块地跳出来。
+    ///
+    /// 开启它不会让解析次数翻倍:`GeometryTileWorker::setData` 自带合并,忙时
+    /// 只替换待解析的数据并标记 NeedsParse,连续到达塌成"当前这次 + 最后一次"。
+    virtual bool progressive() const noexcept { return false; }
 };
 
 /// 稀疏层级复用的瓦片数据适配:本瓦片取的是祖先数据瓦片时(steps>0)包一层

@@ -59,6 +59,7 @@ void TileSchemeExtension::reset() {
     }
     aliased.store(false, std::memory_order_relaxed);
     gateByTile.store(false, std::memory_order_relaxed);
+    mergeEnabled.store(false, std::memory_order_relaxed);
     sizeShift.store(0, std::memory_order_relaxed);
     centeredOrigin.store(false, std::memory_order_relaxed);
     active.store(false, std::memory_order_release);
@@ -81,6 +82,15 @@ bool TileSchemeExtension::configure(const std::string& key, const JSValue& value
         }
         Log::Warning(Event::ParseStyle, "extra.layer-zoom-gate 取值无法识别:" + std::string(name));
         return false;
+    }
+
+    if (key == "tile-merge") {
+        if (!value.IsBool()) {
+            Log::Warning(Event::ParseStyle, "extra.tile-merge 必须是布尔值(是否对比数据更粗的层级做负子分)");
+            return false;
+        }
+        mergeEnabled.store(value.GetBool(), std::memory_order_release);
+        return true;
     }
 
     if (key == "tile-origin") {
@@ -204,9 +214,18 @@ int32_t TileSchemeExtension::coveringZoom(int32_t level) const noexcept {
         return level;
     }
     const int32_t mapped = table[static_cast<std::size_t>(level)].load(std::memory_order_relaxed);
-    // 只有当数据层级比 canonical 层级更细时才抬高取瓦层级:更粗的数据可以
-    // 细分复用,更细的数据却无法合并。其余情况保持网格稠密,交给 subdivision()。
-    return (mapped != identity && mapped > level) ? mapped : level;
+    if (mapped == identity || mapped <= level) {
+        // 数据不比本级更细:正向细分复用,网格本就稠密。
+        return level;
+    }
+    // 数据比本级更细。开了 tile-merge 就**不抬高**,交给负子分把 2^k × 2^k 张
+    // 合成一张(见 hooks.hpp 的 TileSubdivision),每级各有自己的瓦片,
+    // `overscaledZ` 因此恒等于显示层级,样式 filter 里的 ["zoom"] 处处准确。
+    //
+    // 没开就走原版:把取瓦层级抬到数据层级。代价是这几级塌到同一批瓦片上,而
+    // SymbolLayout 对每张瓦片只求值一次图层 filter,那几级只能共用一个 zoom 值
+    // ——真机上表现为世界层级画出了官方在该级根本不画的一堆国家名和岛礁名。
+    return mergeEnabled.load(std::memory_order_relaxed) ? level : mapped;
 }
 
 TileSubdivision TileSchemeExtension::subdivision(uint8_t z, uint32_t x, uint32_t y) const noexcept {
@@ -216,11 +235,24 @@ TileSubdivision TileSchemeExtension::subdivision(uint8_t z, uint32_t x, uint32_t
         return sub;
     }
     const int32_t mapped = table[z].load(std::memory_order_relaxed);
-    if (mapped == identity || mapped >= static_cast<int32_t>(z)) {
-        return sub; // 本层级自带数据(或已被 coveringZoom 抬高),无需变换
+    if (mapped == identity || mapped == static_cast<int32_t>(z)) {
+        return sub; // 本层级自带数据,无需变换
+    }
+    if (mapped > static_cast<int32_t>(z)) {
+        if (!mergeEnabled.load(std::memory_order_relaxed)) {
+            // 没开 tile-merge:coveringZoom 已把取瓦层级抬到数据层级,不会有
+            // 比数据更粗的瓦片走到这里;真走到了也不做变换(原版行为)。
+            sub.dataZ = z;
+            return sub;
+        }
+        // 数据更细:本瓦片包含 2^k × 2^k 张数据瓦片。没有"子格坐标"可言——
+        // 偏移是每张**源**瓦片各自的,由数据源在合成时逐格给出。
+        sub.dataZ = static_cast<uint8_t>(mapped);
+        sub.steps = static_cast<int8_t>(static_cast<int32_t>(z) - mapped);
+        return sub;
     }
     sub.dataZ = static_cast<uint8_t>(mapped);
-    sub.steps = static_cast<uint8_t>(static_cast<int32_t>(z) - mapped);
+    sub.steps = static_cast<int8_t>(static_cast<int32_t>(z) - mapped);
     // 本瓦片在祖先瓦片内的子格坐标。
     sub.offX = x - ((x >> sub.steps) << sub.steps);
     sub.offY = y - ((y >> sub.steps) << sub.steps);

@@ -99,12 +99,20 @@ Resource Resource::tile(const std::string& urlTemplate,
     // hook:稀疏金字塔中,本层级若无数据则改取祖先数据瓦片(见 src/mln/extras);
     // hook:tile-grid 生效时,本瓦片(墨卡托槽位)的 leg0 = 覆盖其北缘的度数行;
     // 其余度数行由 extras 的数据源自行请求(见 extras/hooks.hpp 的 TileDataSource)。
+    const auto sub = extras::tileSubdivision(
+        static_cast<uint8_t>(z), static_cast<uint32_t>(x), static_cast<uint32_t>(y));
+    if (sub.steps < 0) {
+        // 负子分:本瓦片**包含** 2^k × 2^k 张数据瓦片。引擎自己那一次取瓦拿西北角
+        // 那一格,其余由 TileDataSource 自取。必须先降到数据层级,后面的行号映射
+        // 和编号换算才是在数据层级上算的。
+        const int32_t k = -sub.steps;
+        x <<= k;
+        y <<= k;
+        z = static_cast<int8_t>(sub.dataZ);
+    }
     y = static_cast<int32_t>(extras::tileGridLeg0Row(static_cast<uint8_t>(z), static_cast<uint32_t>(y)));
     // 多个 canonical 瓦片会命中同一 URL,由 HTTP 缓存去重。
-    if (const auto sub = extras::tileSubdivision(static_cast<uint8_t>(z),
-                                                 static_cast<uint32_t>(x),
-                                                 static_cast<uint32_t>(y));
-        sub.steps > 0) {
+    if (sub.steps > 0) {
         x >>= sub.steps;
         y >>= sub.steps;
         z = static_cast<int8_t>(sub.dataZ);

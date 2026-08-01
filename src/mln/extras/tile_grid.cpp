@@ -1,5 +1,7 @@
 #include <mln/extras/tile_grid.hpp>
 
+#include <mln/extras/merged_tile_data.hpp>
+
 #include <mln/storage/file_source.hpp>
 #include <mln/util/async_request.hpp>
 #include <mln/storage/resource.hpp>
@@ -11,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -202,7 +205,8 @@ TileGridDualFetch::TileGridDualFetch(std::shared_ptr<FileSource> fileSource_,
                                      uint8_t z_,
                                      uint32_t x_,
                                      uint32_t yMercator_,
-                                     std::function<void()> onLegArrived_)
+                                     std::function<void()> onLegArrived_,
+                                     bool fetchPrimary)
     : fileSource(std::move(fileSource_)),
       urlTemplate(std::move(urlTemplate_)),
       pixelRatio(pixelRatio_),
@@ -220,18 +224,28 @@ TileGridDualFetch::TileGridDualFetch(std::shared_ptr<FileSource> fileSource_,
         leg.row = r;
         legs.push_back(std::move(leg));
     }
-    // leg0 走引擎 TileLoader;其余行自行请求(缓存优先,一次性)。
-    for (std::size_t i = 1; i < legs.size(); ++i) {
+    // leg0 通常走引擎 TileLoader(字节经 setPrimaryData 注入);其余行自行请求
+    // (缓存优先,一次性)。fetchPrimary 时 leg0 也自取——负子分的非西北角子格
+    // 没有对应的引擎取瓦。
+    for (std::size_t i = fetchPrimary ? 0 : 1; i < legs.size(); ++i) {
         if (!fileSource) {
             legs[i].done = true;
+            if (i == 0) {
+                leg0Set = true;
+            }
             continue;
         }
         Resource resource = [&] {
-            TileGridResourceBypass bypass;
+            // leg0 的行号本来就该由 Resource::tile() 映射(它就是"覆盖北缘的度数
+            // 行"),所以只有其余行才旁路;否则会被重复映射一次。
+            std::optional<TileGridResourceBypass> bypass;
+            if (i > 0) {
+                bypass.emplace();
+            }
             return Resource::tile(urlTemplate,
                                   pixelRatio,
                                   static_cast<int32_t>(x),
-                                  static_cast<int32_t>(legs[i].row),
+                                  static_cast<int32_t>(i > 0 ? legs[i].row : yMercator),
                                   static_cast<int8_t>(z),
                                   static_cast<Tileset::Scheme>(scheme),
                                   Resource::LoadingMethod::All);
@@ -242,6 +256,9 @@ TileGridDualFetch::TileGridDualFetch(std::shared_ptr<FileSource> fileSource_,
             leg.request.reset();
             if (!response.error && response.data) {
                 leg.data = response.data;
+            }
+            if (i == 0) {
+                leg0Set = true;
             }
             if (onLegArrived) {
                 onLegArrived();
@@ -287,7 +304,7 @@ std::unique_ptr<GeometryTileData> TileGridDualFetch::build() const {
         if (const auto sub = tileSubdivision(z, x, leg.row); sub.steps > 0) {
             data = std::make_unique<SubdividedGeometryTileData>(
                 std::move(data),
-                sub.steps,
+                static_cast<uint8_t>(sub.steps),
                 sub.offX,
                 sub.offY,
                 sharedParentIndex(sourceID, sub.dataZ, x >> sub.steps, leg.row >> sub.steps));
@@ -309,6 +326,183 @@ std::unique_ptr<GeometryTileData> TileGridDualFetch::build() const {
     return std::make_unique<ComposedGeometryTileData>(std::move(parts));
 }
 
+namespace {
+
+/// 负子分下的一个子格数据源:就一张瓦片,没有度数行拆分(tile-grid 未生效时用)。
+class SingleTileFetch final : public TileDataSource {
+public:
+    SingleTileFetch(const std::shared_ptr<FileSource>& fileSource,
+                    const std::string& urlTemplate,
+                    float pixelRatio,
+                    uint8_t scheme,
+                    uint8_t z,
+                    uint32_t x,
+                    uint32_t y,
+                    bool fetchSelf,
+                    std::function<void()> onArrived_)
+        : onArrived(std::move(onArrived_)) {
+        if (!fetchSelf) {
+            return; // 字节由引擎经 setPrimaryData 注入
+        }
+        if (!fileSource) {
+            done = true;
+            return;
+        }
+        const Resource resource = Resource::tile(urlTemplate,
+                                                 pixelRatio,
+                                                 static_cast<int32_t>(x),
+                                                 static_cast<int32_t>(y),
+                                                 static_cast<int8_t>(z),
+                                                 static_cast<Tileset::Scheme>(scheme),
+                                                 Resource::LoadingMethod::All);
+        request = fileSource->request(resource, [this](const Response& response) {
+            done = true;
+            request.reset();
+            if (!response.error && response.data) {
+                data = response.data;
+            }
+            if (onArrived) {
+                onArrived();
+            }
+        });
+    }
+
+    void setPrimaryData(std::shared_ptr<const std::string> data_) override {
+        data = std::move(data_);
+        done = true;
+    }
+    bool ready() const noexcept override { return done; }
+    std::unique_ptr<GeometryTileData> build() const override {
+        if (!data) {
+            return nullptr;
+        }
+        return std::make_unique<VectorMVTTileData>(data);
+    }
+
+private:
+    std::function<void()> onArrived;
+    bool done = false;
+    std::shared_ptr<const std::string> data;
+    std::unique_ptr<AsyncRequest> request;
+};
+
+/// 负子分:本瓦片**包含** 2^k × 2^k 张数据瓦片,逐格取回后缩小平移拼合。
+///
+/// 引擎自己那一次取瓦落在**西北角**那一格(见 Resource::tile 的负 steps 分支),
+/// 所以 cells[0] 等它的 setPrimaryData,其余格全部自取。每一格内部仍走完整的
+/// 常规路径 —— tile-grid 生效时它自己就是一个 TileGridDualFetch,度数行拆分在
+/// 子格这一层完成,两种变换因此天然复合,不必把 leg 集合泛化成行×列。
+class MergedTileDataSource final : public TileDataSource {
+public:
+    MergedTileDataSource(std::shared_ptr<FileSource> fileSource,
+                         const std::string& urlTemplate,
+                         float pixelRatio,
+                         uint8_t scheme,
+                         const std::string& sourceID,
+                         uint32_t x,
+                         uint32_t y,
+                         uint8_t dataZ,
+                         uint8_t steps,
+                         std::function<void()> onArrived)
+        : k(steps) {
+        // 扇出是 4^k。现实配置下 k ≤ 2(相机下限 0 ⇒ canonical 最低 1,而最粗数据
+        // 是 z3),即 16 张源瓦片。这里只给写错的 tile-levels 兜底,免得一个手误让
+        // 单张瓦片去拉几千个请求。
+        if (k > 3) {
+            Log::Warning(Event::ParseStyle,
+                         "extra.tile-levels:本层级比数据层级低 " + std::to_string(int(k)) +
+                             " 级,扇出过大,放弃合成(该层级无数据)");
+            return;
+        }
+        const uint32_t n = 1u << k;
+        const uint32_t baseX = x << k;
+        const uint32_t baseY = y << k;
+        cells.reserve(static_cast<std::size_t>(n) * n);
+        for (uint32_t oy = 0; oy < n; ++oy) {
+            for (uint32_t ox = 0; ox < n; ++ox) {
+                const bool primary = (ox == 0 && oy == 0);
+                Cell cell;
+                cell.offX = ox;
+                cell.offY = oy;
+                if (tileGridActive()) {
+                    cell.src = std::make_unique<TileGridDualFetch>(fileSource,
+                                                                   urlTemplate,
+                                                                   pixelRatio,
+                                                                   scheme,
+                                                                   sourceID,
+                                                                   dataZ,
+                                                                   baseX + ox,
+                                                                   baseY + oy,
+                                                                   onArrived,
+                                                                   /*fetchPrimary=*/!primary);
+                } else {
+                    cell.src = std::make_unique<SingleTileFetch>(fileSource,
+                                                                 urlTemplate,
+                                                                 pixelRatio,
+                                                                 scheme,
+                                                                 dataZ,
+                                                                 baseX + ox,
+                                                                 baseY + oy,
+                                                                 /*fetchSelf=*/!primary,
+                                                                 onArrived);
+                }
+                cells.push_back(std::move(cell));
+            }
+        }
+    }
+
+    void setPrimaryData(std::shared_ptr<const std::string> data) override {
+        if (cells.empty()) {
+            return; // 扇出兜底已放弃合成
+        }
+        cells.front().src->setPrimaryData(std::move(data));
+    }
+
+    bool ready() const noexcept override {
+        for (const auto& cell : cells) {
+            if (!cell.src->ready()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// 渐进式:16 格全等齐才出图会让世界视图整块整块地跳出来。每格到达就用当前
+    /// 已有的部分重建——`build()` 本来就会跳过还没到的格子。
+    bool progressive() const noexcept override { return true; }
+
+    std::unique_ptr<GeometryTileData> build() const override {
+        std::vector<std::unique_ptr<GeometryTileData>> parts;
+        parts.reserve(cells.size());
+        for (const auto& cell : cells) {
+            auto data = cell.src->build();
+            if (!data) {
+                continue; // 空瓦片/失败的格子跳过,其余照常出图
+            }
+            parts.push_back(std::make_unique<MergedGeometryTileData>(std::move(data), k, cell.offX, cell.offY));
+        }
+        if (parts.empty()) {
+            return nullptr;
+        }
+        if (parts.size() == 1) {
+            return std::move(parts.front());
+        }
+        return std::make_unique<ComposedGeometryTileData>(std::move(parts));
+    }
+
+private:
+    struct Cell {
+        uint32_t offX = 0;
+        uint32_t offY = 0;
+        std::unique_ptr<TileDataSource> src;
+    };
+
+    const uint8_t k;
+    std::vector<Cell> cells; ///< cells[0] = 西北角(引擎注入的那一格)
+};
+
+} // namespace
+
 std::unique_ptr<TileDataSource> makeTileDataSource(std::shared_ptr<FileSource> fileSource,
                                                    const std::string& urlTemplate,
                                                    float pixelRatio,
@@ -318,8 +512,24 @@ std::unique_ptr<TileDataSource> makeTileDataSource(std::shared_ptr<FileSource> f
                                                    uint32_t x,
                                                    uint32_t y,
                                                    std::function<void()> onDataArrived) {
-    // 目前只有 tile-grid 需要额外的数据源;其余情况上游走原生路径。
-    if (!tileGridActive() || urlTemplate.empty()) {
+    if (urlTemplate.empty()) {
+        return nullptr;
+    }
+    // 负子分优先:它内部会按需再套 tile-grid 的度数行拆分。
+    if (const auto sub = tileSubdivision(z, x, y); sub.steps < 0) {
+        return std::make_unique<MergedTileDataSource>(std::move(fileSource),
+                                                      urlTemplate,
+                                                      pixelRatio,
+                                                      scheme,
+                                                      sourceID,
+                                                      x,
+                                                      y,
+                                                      sub.dataZ,
+                                                      static_cast<uint8_t>(-sub.steps),
+                                                      std::move(onDataArrived));
+    }
+    // 其余情况只有 tile-grid 需要额外的数据源;否则上游走原生路径。
+    if (!tileGridActive()) {
         return nullptr;
     }
     return std::make_unique<TileGridDualFetch>(

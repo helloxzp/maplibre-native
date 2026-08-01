@@ -226,7 +226,7 @@ std::unique_ptr<GeometryTileData> adaptTileData(
     std::unique_ptr<GeometryTileData> data, uint8_t z, uint32_t x, uint32_t y, const std::string& sourceID) {
     if (const auto sub = tileSubdivision(z, x, y); sub.steps > 0) {
         data = std::make_unique<SubdividedGeometryTileData>(
-            std::move(data), sub.steps, sub.offX, sub.offY, sharedParentIndex(sourceID, sub.dataZ, x >> sub.steps, y >> sub.steps));
+            std::move(data), static_cast<uint8_t>(sub.steps), sub.offX, sub.offY, sharedParentIndex(sourceID, sub.dataZ, x >> sub.steps, y >> sub.steps));
     }
     return data;
 }

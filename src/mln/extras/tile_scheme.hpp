@@ -64,7 +64,7 @@ public:
     TileSchemeExtension();
 
     std::vector<std::string> keys() const override {
-        return {"tile-levels", "tile-size", "tile-origin", "layer-zoom-gate"};
+        return {"tile-levels", "tile-size", "tile-origin", "layer-zoom-gate", "tile-merge"};
     }
     bool configure(const std::string& key, const JSValue& value) override;
     void reset() override;
@@ -106,6 +106,18 @@ public:
 
 private:
     std::atomic<bool> gateByTile{false};
+
+    /// `extra: { "tile-merge": true }` —— 比最粗数据层级还粗的那几级,是否用
+    /// **负子分**(把 2^k × 2^k 张数据瓦片合成一张)来保持网格稠密。
+    ///
+    /// 关(默认):`coveringZoom` 把取瓦层级**抬高**到数据层级 —— 原版行为。代价
+    /// 是那几级塌到同一批瓦片上,`overscaledZ` 不再等于显示层级,样式 filter 里的
+    /// ["zoom"] 会读到抬高后的值,按层级的门在那几级分不开。
+    ///
+    /// 开:每级各有自己的瓦片,`overscaledZ` 恒等于显示层级,门在任何层级都准。
+    /// 代价是那几级各要取 4^k 张源瓦片(相机下限 0 时 k ≤ 2,即 ≤16 张),而且
+    /// 跨级不再复用同一批 Tile 对象,要各自解析一次。
+    std::atomic<bool> mergeEnabled{false};
 };
 
 } // namespace extras

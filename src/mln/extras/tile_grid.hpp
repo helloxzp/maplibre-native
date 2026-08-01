@@ -165,6 +165,9 @@ private:
 /// 合成数据。所有回调都在创建线程(Map 线程)上,无需加锁。
 class TileGridDualFetch final : public TileDataSource {
 public:
+    /// `fetchPrimary` 为真时连 leg0 也自己请求,不等 setPrimaryData。负子分
+    /// (本瓦片包含多张数据瓦片)下只有西北角那一格的 leg0 来自引擎的 TileLoader,
+    /// 其余子格整张都得自取。
     TileGridDualFetch(std::shared_ptr<FileSource> fileSource,
                       std::string urlTemplate,
                       float pixelRatio,
@@ -173,7 +176,8 @@ public:
                       uint8_t z,
                       uint32_t x,
                       uint32_t yMercator,
-                      std::function<void()> onLegArrived);
+                      std::function<void()> onLegArrived,
+                      bool fetchPrimary = false);
     ~TileGridDualFetch();
 
     /// 注入 leg0(引擎 TileLoader 的字节;nullptr = 空瓦片/无数据)。
