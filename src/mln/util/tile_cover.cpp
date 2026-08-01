@@ -152,9 +152,10 @@ int32_t coveringZoomLevel(double zoom, style::SourceType type, uint16_t size) no
     const int32_t level = (type == style::SourceType::Raster || type == style::SourceType::Video)
                               ? static_cast<int32_t>(std::round(zoom))
                               : static_cast<int32_t>(std::floor(zoom));
-    // hook:style 的 `extra` 扩展可把层级重映射到稀疏金字塔真实存在的层级
-    // (见 src/mln/extras);无扩展生效时原样返回。
-    return extras::mapCoveringZoom(level);
+    // hook:style 的 `extra` 扩展可把层级重映射到稀疏金字塔真实存在的层级,
+    // 也可改变整数层级的**进位点**(见 src/mln/extras);无扩展生效时原样返回。
+    // 传取整前的 zoom 是为了后者——取整之后小数就没了。
+    return extras::mapCoveringZoom(zoom, level);
 }
 
 std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,

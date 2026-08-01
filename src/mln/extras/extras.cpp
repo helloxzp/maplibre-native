@@ -163,9 +163,9 @@ void Registry::configure(const JSValue* extra) {
     publishHooks(s);
 }
 
-int32_t mapCoveringZoom(int32_t level) noexcept {
+int32_t mapCoveringZoom(double zoom, int32_t level) noexcept {
     if (auto* scheme = activeScheme.load(std::memory_order_acquire)) {
-        return scheme->coveringZoom(level);
+        return scheme->coveringZoom(zoom, level);
     }
     return level;
 }

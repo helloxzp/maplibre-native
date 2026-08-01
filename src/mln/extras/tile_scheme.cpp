@@ -60,6 +60,7 @@ void TileSchemeExtension::reset() {
     aliased.store(false, std::memory_order_relaxed);
     gateByTile.store(false, std::memory_order_relaxed);
     mergeEnabled.store(false, std::memory_order_relaxed);
+    zoomCarry.store(1.0, std::memory_order_relaxed);
     sizeShift.store(0, std::memory_order_relaxed);
     centeredOrigin.store(false, std::memory_order_relaxed);
     active.store(false, std::memory_order_release);
@@ -82,6 +83,20 @@ bool TileSchemeExtension::configure(const std::string& key, const JSValue& value
         }
         Log::Warning(Event::ParseStyle, "extra.layer-zoom-gate 取值无法识别:" + std::string(name));
         return false;
+    }
+
+    if (key == "zoom-carry") {
+        if (!value.IsNumber()) {
+            Log::Warning(Event::ParseStyle, "extra.zoom-carry 必须是数字:整数层级进位点,取值 (0, 1],1 = 原版");
+            return false;
+        }
+        const double carry = value.GetDouble();
+        if (!(carry > 0.0) || carry > 1.0) {
+            Log::Warning(Event::ParseStyle, "extra.zoom-carry 必须落在 (0, 1]");
+            return false;
+        }
+        zoomCarry.store(carry, std::memory_order_release);
+        return true;
     }
 
     if (key == "tile-merge") {
@@ -206,8 +221,18 @@ bool TileSchemeExtension::configure(const std::string& key, const JSValue& value
     return true;
 }
 
-int32_t TileSchemeExtension::coveringZoom(int32_t level) const noexcept {
-    // 先按瓦片尺寸平移(256px 源比 512px 源多取一级),再查稀疏映射表:
+int32_t TileSchemeExtension::coveringZoom(double zoom, int32_t level) const noexcept {
+    // 进位点前移:引擎原生"满 1 才进位"(floor),而高德的样式波段在小数 .8 处就
+    // 进位。不同步的话,相机小数落在 [carry, 1) 的那 20% 区间里,样式 filter 拿到
+    // 的瓦片层级会比高德的显示层级低一级 —— 标注整整晚一档才出现。
+    //
+    // `zoom - level` 在 floor 路径上就是小数部分;栅格源走的是 round,level 可能
+    // 已经比 zoom 大、差值为负,条件自然不成立,所以这里对栅格天然无副作用。
+    const double carry = zoomCarry.load(std::memory_order_relaxed);
+    if (carry < 1.0 && (zoom - static_cast<double>(level)) >= carry) {
+        level += 1;
+    }
+    // 再按瓦片尺寸平移(256px 源比 512px 源多取一级),然后查稀疏映射表:
     // 表里写的是数据层级,应当作用在平移之后的层级上。
     level += sizeShift.load(std::memory_order_relaxed);
     if (level < 0 || level > maxLevel) {

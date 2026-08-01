@@ -64,19 +64,20 @@ public:
     TileSchemeExtension();
 
     std::vector<std::string> keys() const override {
-        return {"tile-levels", "tile-size", "tile-origin", "layer-zoom-gate", "tile-merge"};
+        return {"tile-levels", "tile-size", "tile-origin", "layer-zoom-gate", "tile-merge", "zoom-carry"};
     }
     bool configure(const std::string& key, const JSValue& value) override;
     void reset() override;
     TileScheme* tileScheme() noexcept override {
         return (active.load(std::memory_order_relaxed) || sizeShift.load(std::memory_order_relaxed) != 0 ||
-                centeredOrigin.load(std::memory_order_relaxed) || aliased.load(std::memory_order_relaxed))
+                centeredOrigin.load(std::memory_order_relaxed) || aliased.load(std::memory_order_relaxed) ||
+                zoomCarry.load(std::memory_order_relaxed) < 1.0)
                    ? this
                    : nullptr;
     }
 
 private:
-    int32_t coveringZoom(int32_t level) const noexcept override;
+    int32_t coveringZoom(double zoom, int32_t level) const noexcept override;
     TileSubdivision subdivision(uint8_t z, uint32_t x, uint32_t y) const noexcept override;
     void translate(uint8_t z, int64_t& x, int64_t& y) const noexcept override;
     int32_t levelId(uint8_t z) const noexcept override;
@@ -118,6 +119,18 @@ private:
     /// 代价是那几级各要取 4^k 张源瓦片(相机下限 0 时 k ≤ 2,即 ≤16 张),而且
     /// 跨级不再复用同一批 Tile 对象,要各自解析一次。
     std::atomic<bool> mergeEnabled{false};
+
+    /// `extra: { "zoom-carry": 0.8 }` —— 整数瓦片层级的**进位点**。
+    ///
+    /// 引擎原生是"满 1 才进位"(floor),而高德的样式波段在小数 .8 处就进位
+    /// (见 maplibre.go 的 regionVisibilityExpr:波段 az 从相机 az-1.2 起生效)。
+    /// 两者不同步的后果:相机小数落在 [carry, 1) 时,样式 filter 里的 ["zoom"]
+    /// (= 瓦片层级)比高德的显示层级低一级。真机实测相机 1.87 时官方画约 27 个
+    /// 国名,我们只画 3 个。
+    ///
+    /// 声明 0.8 之后 `floor(camera + sizeShift + 0.2) == floor(camera + 1.2)`,
+    /// 与高德的 az **恒等**,不是近似。缺省 1.0 = 原版行为。
+    std::atomic<double> zoomCarry{1.0};
 };
 
 } // namespace extras

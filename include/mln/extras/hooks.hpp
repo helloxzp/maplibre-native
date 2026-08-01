@@ -49,10 +49,12 @@ class TileScheme {
 public:
     virtual ~TileScheme() = default;
 
-    /// `level` 是引擎原生公式算出的层级。仅在该层级比最粗的数据层级还粗时
-    /// 才需要抬高(无法由更粗的数据细分而来);其余情况原样返回,保持网格稠密。
-    /// 必须 noexcept:调用方本身处于 noexcept 路径。
-    virtual int32_t coveringZoom(int32_t level) const noexcept = 0;
+    /// `level` 是引擎原生公式算出的层级,`zoom` 是它**取整前**的值(已按源瓦片
+    /// 尺寸平移)。绝大多数实现只用 level;传 zoom 是为了让实现能改变**进位点**
+    /// ——引擎原生是"满 1 才进位"(floor),而某些数据源的样式波段在小数 .8 处就
+    /// 进位,两者不同步会让样式 filter 里的 ["zoom"] 在那一段小数区间读到低一级
+    /// 的值。必须 noexcept:调用方本身处于 noexcept 路径。
+    virtual int32_t coveringZoom(double zoom, int32_t level) const noexcept = 0;
 
     /// 查询 canonical 瓦片 (z,x,y) 的数据来源。
     virtual TileSubdivision subdivision(uint8_t z, uint32_t x, uint32_t y) const noexcept = 0;
@@ -213,8 +215,9 @@ struct WorldBounds {
 };
 
 /// 应用当前生效的取瓦层级钳制,没有扩展生效时原样返回 `level`。
+/// `zoom` 是取整前的层级,供需要改变进位点的实现使用(见 TileScheme::coveringZoom)。
 /// 热路径:每帧每个数据源调用一次,无扩展时仅一次原子读取加一次分支。
-int32_t mapCoveringZoom(int32_t level) noexcept;
+int32_t mapCoveringZoom(double zoom, int32_t level) noexcept;
 
 /// 查询瓦片的数据来源。无扩展生效时返回 `{z, 0, 0, 0}`,即本层级直接取数据。
 TileSubdivision tileSubdivision(uint8_t z, uint32_t x, uint32_t y) noexcept;
