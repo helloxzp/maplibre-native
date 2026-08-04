@@ -412,6 +412,26 @@ private:
     mutable std::optional<GeometryCollection> transformed;
 };
 
+/// 子分后的图层**只呈现落在本子格里的要素**,而不是把祖先整层原样透出。
+///
+/// 这不是锦上添花:上游按 `featureCount()` 逐个 `getFeature(i)` 再求 filter
+/// (symbol_layout.cpp:170、geometry_tile_worker.cpp:487),而那两步在几何之前 ——
+/// 包围盒索引挡得住几何解码,挡不住**逐要素的属性解析和 filter 求值**。
+/// 祖先被 2^steps × 2^steps 个子格复用,每个子格都要把整层扫一遍才发现绝大多数
+/// 落在格外:az19(steps=5)时一张 z14 祖先有 4777 个 POI,而每个子格空间上只留
+/// 得下个位数,等于 99.9% 的解析和求值是白做的,而且子分越深重复次数越多。
+///
+/// 实测(福州 三坊七巷,相机 18.00 = az19,平移一屏到收敛):全量 3.33s;把
+/// poi/poi-cover 两层关掉降到 0.59s —— 也就是说这一层的量就是全部代价。
+///
+/// 判据与 `SubdividedGeometryTileFeature::getGeometries()` 逐字一致(点用
+/// [0, EXTENT),其余用缓冲带),所以不会出现"被图层放行、却被要素判空"或反之。
+/// 下标是**重编号**的:上游把 `featureIndex` 存进 FeatureIndex、事后再拿它回查
+/// (`getFeature(index)`),两次都经由同一个 `SubdividedGeometryTileData::getLayer`
+/// 得到同样的 slots/scale/dx/dy,重建出的可见集逐位相同,所以自洽。
+///
+/// 没有共享索引时(slots 为空)退回原样全透出:那条路要解码几何才能判定,
+/// 在这里预筛反而把省下来的活儿又做了一遍。
 class SubdividedGeometryTileLayer final : public GeometryTileLayer {
 public:
     SubdividedGeometryTileLayer(std::unique_ptr<GeometryTileLayer> inner_,
@@ -423,21 +443,49 @@ public:
           scale(scale_),
           dx(dx_),
           dy(dy_),
-          slots(slots_) {}
+          slots(slots_) {
+        if (!slots || slots->size() != inner->featureCount()) {
+            return; // 无索引 / 对不上号:不预筛,行为与从前一致
+        }
+        visible.reserve(slots->size() / 4 + 1);
+        for (std::size_t i = 0; i < slots->size(); ++i) {
+            if (intersects((*slots)[i])) {
+                visible.push_back(static_cast<uint32_t>(i));
+            }
+        }
+        filtered = true;
+    }
 
-    std::size_t featureCount() const override { return inner->featureCount(); }
+    std::size_t featureCount() const override { return filtered ? visible.size() : inner->featureCount(); }
     std::unique_ptr<GeometryTileFeature> getFeature(std::size_t i) const override {
-        const auto* slot = (slots && i < slots->size()) ? &(*slots)[i] : nullptr;
-        return std::make_unique<SubdividedGeometryTileFeature>(inner->getFeature(i), scale, dx, dy, slot);
+        const std::size_t j = filtered ? (i < visible.size() ? visible[i] : 0) : i;
+        const auto* slot = (slots && j < slots->size()) ? &(*slots)[j] : nullptr;
+        return std::make_unique<SubdividedGeometryTileFeature>(inner->getFeature(j), scale, dx, dy, slot);
     }
     std::string getName() const override { return inner->getName(); }
 
 private:
+    /// 要素的源包围盒经仿射变换后是否与本子格(含缓冲)相交。只做 4 次乘法,
+    /// 不解码几何、不读属性 —— 这正是它比让上游走一遍便宜的地方。
+    bool intersects(const ParentGeometryIndex::FeatureSlot& s) const {
+        if (s.maxX < s.minX) return false; // 空要素
+        const bool isPoint = s.type == FeatureType::Point;
+        const int32_t lo = isPoint ? 0 : detail::clipMin;
+        const int32_t hi = isPoint ? util::EXTENT - 1 : detail::clipMax;
+        const int32_t loX = s.minX * scale - dx;
+        const int32_t hiX = s.maxX * scale - dx;
+        const int32_t loY = s.minY * scale - dy;
+        const int32_t hiY = s.maxY * scale - dy;
+        return !(hiX < lo || hiY < lo || loX > hi || loY > hi);
+    }
+
     std::unique_ptr<GeometryTileLayer> inner;
     const int32_t scale;
     const int32_t dx;
     const int32_t dy;
     const std::vector<ParentGeometryIndex::FeatureSlot>* slots;
+    std::vector<uint32_t> visible;
+    bool filtered = false;
 };
 
 class SubdividedGeometryTileData final : public GeometryTileData {
