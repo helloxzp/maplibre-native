@@ -319,7 +319,28 @@ public:
         const int32_t hiX = maxX * scale - dx;
         const int32_t loY = minY * scale - dy;
         const int32_t hiY = maxY * scale - dy;
-        if (hiX < detail::clipMin || hiY < detail::clipMin || loX > detail::clipMax || loY > detail::clipMax) {
+
+        // **点要素只归它自己那一格**:缓冲带里的副本一律丢掉,判据是 [0, EXTENT)。
+        //
+        // clipBuffer 那 2048(半张瓦片)是给线和面留的 —— 跨界的几何要靠它接得上。
+        // 点不需要:每个点只属于一个子格,而子格恰好铺满祖先瓦片,所以"落在自己格内"
+        // 就是一次不重不漏的划分。放宽到缓冲带的后果是同一个 POI 会被 2~4 个子格
+        // 各发一份,而 poi-cover 那层(canCovered)把避让整个关掉了,重复压不掉,
+        // 于是同一个标注被画好几遍、抗锯齿边缘层层加深 —— 真机症状是省名粗细不一:
+        // 相机 3.00 上 河南省(离子格角只有 8 个单位,进 4 格)的暗像素覆盖率 35.6%,
+        // 而 四川省(远离边界,只有一份)25.1%,差 1.42 倍。把 poi-cover 的避让临时
+        // 打开,粗的那几个立刻掉回 24% 一线,细的纹丝不动 —— 重复被压掉了。
+        //
+        // merged_tile_data.hpp(负子分)本来就是这么做的,这里是漏了、不是有意放宽。
+        // 标注不会因此在格子边缘被切掉:符号本来就允许画出瓦片边界,拥有该点的那个
+        // 子格照常渲染它。
+        const auto type = getType();
+        const bool isPoint = type == FeatureType::Point;
+
+        // 早剔除也跟着收紧:点用 [0, EXTENT),比缓冲带窄得多,能挡掉更多祖先要素。
+        const int32_t rejectLo = isPoint ? 0 : detail::clipMin;
+        const int32_t rejectHi = isPoint ? util::EXTENT - 1 : detail::clipMax;
+        if (hiX < rejectLo || hiY < rejectLo || loX > rejectHi || loY > rejectHi) {
             transformed.emplace();
             return *transformed;
         }
@@ -329,6 +350,23 @@ public:
         }
         GeometryCollection out;
         out.reserve(source->size());
+
+        if (isPoint) {
+            for (const auto& ring : *source) {
+                GeometryCoordinates kept;
+                kept.reserve(ring.size());
+                for (const auto& p : ring) {
+                    const int32_t x = p.x * scale - dx;
+                    const int32_t y = p.y * scale - dy;
+                    if (x >= 0 && x < util::EXTENT && y >= 0 && y < util::EXTENT) {
+                        kept.emplace_back(static_cast<int16_t>(x), static_cast<int16_t>(y));
+                    }
+                }
+                if (!kept.empty()) out.push_back(std::move(kept));
+            }
+            transformed = std::move(out);
+            return *transformed;
+        }
 
         // 整个要素都在裁剪矩形内(常见:要素完整落在本子格),直接变换即可。
         if (loX >= detail::clipMin && hiX <= detail::clipMax && loY >= detail::clipMin && hiY <= detail::clipMax) {
@@ -344,8 +382,7 @@ public:
             return *transformed;
         }
 
-        // 跨越边界:按要素类型裁剪。
-        const auto type = getType();
+        // 跨越边界:按要素类型裁剪。点已在上面单独走掉,这里只剩面和线。
         std::vector<detail::Point32> scaled;
         for (const auto& ring : *source) {
             scaled.clear();
@@ -357,17 +394,6 @@ public:
                 case FeatureType::Polygon:
                     detail::clipRing(scaled, out);
                     break;
-                case FeatureType::Point: {
-                    GeometryCoordinates kept;
-                    for (const auto& p : scaled) {
-                        if (p.first >= detail::clipMin && p.first <= detail::clipMax && p.second >= detail::clipMin &&
-                            p.second <= detail::clipMax) {
-                            kept.push_back(detail::narrow(p));
-                        }
-                    }
-                    if (!kept.empty()) out.push_back(std::move(kept));
-                    break;
-                }
                 default: // LineString 及未知类型按折线处理
                     detail::clipLine(scaled, out);
                     break;

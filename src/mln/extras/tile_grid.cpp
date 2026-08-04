@@ -117,10 +117,21 @@ const GeometryCollection& DegreeRowToMercatorFeature::getGeometries() const {
                 detail::clipRing(mapped, out);
                 break;
             case FeatureType::Point: {
+                // **点只归它自己那一格**,判据是 [0, EXTENT) —— 与
+                // subdivided_tile_data.hpp / merged_tile_data.hpp 同一条规则。
+                //
+                // clipMin/clipMax 那 ±2048 是给线和面留的:跨界几何要靠缓冲接得上。
+                // 点不需要,而且放宽会产生重复:x 方向源行与目标瓦片是 1:1,源瓦片自带
+                // 的 ±256 缓冲会让列缝上的 POI 被左右两张各发一份;y 方向一张墨卡托
+                // 瓦片要合成 1~3 条纬度行,行缝上的点同样会被相邻两行各映一份 —— 而
+                // 它们在合成瓦片里落到同一个位置。poi-cover 那层(canCovered)把避让
+                // 整个关掉了,重复压不掉,叠出来就是同一个标注被画两遍、笔画变粗。
+                //
+                // 这一处目前没实测到咬人(az 4 全屏 38 个标注逐个比对,修子分之后已经
+                // 没有残留重复了),但形状与那两处完全相同,三处同一件事该只有一种写法。
                 GeometryCoordinates kept;
                 for (const auto& p : mapped) {
-                    if (p.first >= detail::clipMin && p.first <= detail::clipMax && p.second >= detail::clipMin &&
-                        p.second <= detail::clipMax) {
+                    if (p.first >= 0 && p.first < util::EXTENT && p.second >= 0 && p.second < util::EXTENT) {
                         kept.push_back(detail::narrow(p));
                     }
                 }
