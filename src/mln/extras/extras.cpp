@@ -243,6 +243,13 @@ bool renderZoomGateDisabled() noexcept {
 bool tileCameraBand(uint8_t z, double& lo, double& hi) noexcept {
     if (auto* scheme = activeScheme.load(std::memory_order_acquire)) {
         scheme->cameraBand(z, lo, hi);
+        // 恒等区间不接管:方案在但刻度没错开(没配 zoom-carry / tile-size,如百度)
+        // 时,调用方保持原版 floor/ceil 判据。两种判据只在整数 maxzoom 上不同
+        // (原版 z==maxzoom 不建桶),而百度的 per-level 样式开着 layer-zoom-gate,
+        // 渲染由桶的存在决定 —— 悄悄多建一级的桶就是悄悄多画一级。
+        if (lo == static_cast<double>(z) && hi == static_cast<double>(z) + 1.0) {
+            return false;
+        }
         return true;
     }
     return false;

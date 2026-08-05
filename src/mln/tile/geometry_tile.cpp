@@ -308,6 +308,12 @@ void GeometryTile::setLayers(const std::vector<Immutable<LayerProperties>>& laye
     std::vector<Immutable<LayerProperties>> impls;
     impls.reserve(layers.size());
 
+    // hook:稀疏层级方案下瓦片层级 ≠ 相机层级,而 minZoom/maxZoom 是相机刻度
+    // (渲染清单按相机比,见 RenderLayer::supportsZoom)。拿本瓦片服务的相机区间
+    // 与图层区间求交;刻度恒等(含无扩展)时走原版路径,行为不变。
+    double camLo = 0.0;
+    double camHi = 0.0;
+    const bool useCameraBand = extras::tileCameraBand(static_cast<uint8_t>(id.overscaledZ), camLo, camHi);
     for (const auto& layer : layers) {
         MLN_TRACE_ZONE(layer);
         MLN_ZONE_STR(layer->baseImpl->id);
@@ -316,12 +322,7 @@ void GeometryTile::setLayers(const std::vector<Immutable<LayerProperties>>& laye
         assert(layerImpl.getTypeInfo()->source != LayerTypeInfo::Source::NotRequired);
         assert(layerImpl.source == sourceID);
         assert(layerImpl.visibility != VisibilityType::None);
-        // hook:稀疏层级方案下瓦片层级 ≠ 相机层级,而 minZoom/maxZoom 是相机刻度
-        // (渲染清单按相机比,见 RenderLayer::supportsZoom)。拿本瓦片服务的相机
-        // 区间与图层区间求交;无扩展生效时走原版路径,行为不变。
-        double camLo = 0.0;
-        double camHi = 0.0;
-        if (extras::tileCameraBand(static_cast<uint8_t>(id.overscaledZ), camLo, camHi)) {
+        if (useCameraBand) {
             if (layerImpl.minZoom >= camHi || layerImpl.maxZoom < camLo) {
                 continue;
             }
