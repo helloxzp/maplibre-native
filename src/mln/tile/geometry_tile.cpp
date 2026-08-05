@@ -1,5 +1,7 @@
 #include <mln/tile/geometry_tile.hpp>
 
+#include <mln/extras/hooks.hpp>
+
 #include <mln/actor/scheduler.hpp>
 #include <mln/geometry/feature_index.hpp>
 #include <mln/style/layers/custom_layer.hpp>
@@ -314,7 +316,16 @@ void GeometryTile::setLayers(const std::vector<Immutable<LayerProperties>>& laye
         assert(layerImpl.getTypeInfo()->source != LayerTypeInfo::Source::NotRequired);
         assert(layerImpl.source == sourceID);
         assert(layerImpl.visibility != VisibilityType::None);
-        if (id.overscaledZ < std::floor(layerImpl.minZoom) || id.overscaledZ >= std::ceil(layerImpl.maxZoom)) {
+        // hook:稀疏层级方案下瓦片层级 ≠ 相机层级,而 minZoom/maxZoom 是相机刻度
+        // (渲染清单按相机比,见 RenderLayer::supportsZoom)。拿本瓦片服务的相机
+        // 区间与图层区间求交;无扩展生效时走原版路径,行为不变。
+        double camLo = 0.0;
+        double camHi = 0.0;
+        if (extras::tileCameraBand(static_cast<uint8_t>(id.overscaledZ), camLo, camHi)) {
+            if (layerImpl.minZoom >= camHi || layerImpl.maxZoom < camLo) {
+                continue;
+            }
+        } else if (id.overscaledZ < std::floor(layerImpl.minZoom) || id.overscaledZ >= std::ceil(layerImpl.maxZoom)) {
             continue;
         }
 

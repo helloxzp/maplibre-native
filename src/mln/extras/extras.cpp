@@ -240,6 +240,14 @@ bool renderZoomGateDisabled() noexcept {
     return false;
 }
 
+bool tileCameraBand(uint8_t z, double& lo, double& hi) noexcept {
+    if (auto* scheme = activeScheme.load(std::memory_order_acquire)) {
+        scheme->cameraBand(z, lo, hi);
+        return true;
+    }
+    return false;
+}
+
 WorldBounds worldBounds() noexcept {
     auto* extent = activeExtent.load(std::memory_order_acquire);
     if (!extent) {

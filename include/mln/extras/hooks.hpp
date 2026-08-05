@@ -73,6 +73,18 @@ public:
     /// 渲染清单是否改由"瓦片桶的存在"决定(extra.layer-zoom-gate: "tile")。
     /// 只适用于 per-level 样式表;常规 zoom 门控的样式必须保持 false(默认)。
     virtual bool layerZoomGateByTile() const noexcept { return false; }
+
+    /// 层级为 z 的瓦片服务的**相机 zoom** 半开区间 [lo, hi)。
+    ///
+    /// 原版里两者恒等(相机 c 用 floor(c) 的瓦片),引擎因此在建桶时拿瓦片层级去比
+    /// 图层的 minzoom/maxzoom(geometry_tile.cpp)——那对字段的语义本是**相机**刻度
+    /// (渲染清单的 supportsZoom 就按相机比)。zoom-carry / tile-size 让两种刻度错开
+    /// (0.8+256 时瓦片层级 = 相机 + 1.2),同一对字段的两处消费要的区间不再一致,
+    /// 这里把换算告诉建桶那一处。默认恒等。
+    virtual void cameraBand(uint8_t z, double& lo, double& hi) const noexcept {
+        lo = static_cast<double>(z);
+        hi = lo + 1.0;
+    }
 };
 
 /// 经纬度基准面偏移。
@@ -253,6 +265,10 @@ bool worldWrapDisabled() noexcept;
 /// 过渡期旧级瓦片继续由旧级图层正确着色。
 /// 无扩展生效时返回 false,渲染行为与原版完全一致。
 bool renderZoomGateDisabled() noexcept;
+
+/// 层级为 z 的瓦片服务的相机 zoom 区间(见 TileScheme::cameraBand)。
+/// 返回 false 表示无层级方案生效,调用方应走原版的"瓦片层级 ≈ 相机层级"路径。
+bool tileCameraBand(uint8_t z, double& lo, double& hi) noexcept;
 
 } // namespace extras
 } // namespace mln

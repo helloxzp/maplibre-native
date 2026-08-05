@@ -221,6 +221,19 @@ bool TileSchemeExtension::configure(const std::string& key, const JSValue& value
     return true;
 }
 
+void TileSchemeExtension::cameraBand(uint8_t z, double& lo, double& hi) const noexcept {
+    // 与 coveringZoom 严格互逆:取瓦 z = floor(c + (1-carry)) + sizeShift,
+    // 于是 z 服务的相机区间是 [z - sizeShift - 1 + carry, 上界+1)。
+    // 缺省(carry=1, sizeShift=0)退化为恒等 [z, z+1)。
+    // 稀疏映射表把"数据比本级细"的层级抬高的那条路不在此考虑:开着 tile-merge 时
+    // 网格处处稠密,取瓦层级与本公式一致;没开 merge 的抬高路径里多个相机档共用
+    // 一张瓦片,本就无法给图层门控一个唯一区间,维持保守的一格宽区间即可。
+    const double carry = zoomCarry.load(std::memory_order_relaxed);
+    const int32_t shift = sizeShift.load(std::memory_order_relaxed);
+    lo = static_cast<double>(z) - static_cast<double>(shift) - 1.0 + carry;
+    hi = lo + 1.0;
+}
+
 int32_t TileSchemeExtension::coveringZoom(double zoom, int32_t level) const noexcept {
     // 进位点前移:引擎原生"满 1 才进位"(floor),而高德的样式波段在小数 .8 处就
     // 进位。不同步的话,相机小数落在 [carry, 1) 的那 20% 区间里,样式 filter 拿到

@@ -81,6 +81,7 @@ private:
     TileSubdivision subdivision(uint8_t z, uint32_t x, uint32_t y) const noexcept override;
     void translate(uint8_t z, int64_t& x, int64_t& y) const noexcept override;
     int32_t levelId(uint8_t z) const noexcept override;
+    void cameraBand(uint8_t z, double& lo, double& hi) const noexcept override;
 
     /// 以 canonical 层级为下标的数据层级;`identity` 表示该层级自带数据。
     /// 用原子元素而非加锁:该表在渲染路径上被读取、在 style 加载时被改写,
