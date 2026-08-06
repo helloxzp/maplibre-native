@@ -65,6 +65,12 @@ private:
 /// 当前线程是否处于旁路作用域(供 tileGridLeg0Row 查询)。
 bool tileGridResourceBypassed() noexcept;
 
+/// 当前是否有取瓦网格映射生效。(实现于 extras.cpp,靠注册表的原子指针判定。)
+bool tileGridActive() noexcept;
+
+/// 墨卡托瓦片覆盖的度数行区间;无扩展生效时 r0=r1=y。(实现于 extras.cpp。)
+void tileGridSourceRows(uint8_t z, uint32_t y, uint32_t& r0, uint32_t& r1) noexcept;
+
 class TileGridResourceBypass {
 public:
     TileGridResourceBypass();

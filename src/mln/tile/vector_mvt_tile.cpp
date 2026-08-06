@@ -15,7 +15,8 @@ VectorMVTTile::VectorMVTTile(const OverscaledTileID& id_,
                              const TileParameters& parameters_,
                              const Tileset& tileset_,
                              TileObserver* observer_)
-    : VectorTile(id_, std::move(sourceID_), parameters_, tileset_, observer_) {
+    : VectorTile(id_, std::move(sourceID_), parameters_, tileset_, observer_),
+      mergedTile(extras::tileSubdivision(id_.canonical.z, id_.canonical.x, id_.canonical.y).steps < 0) {
     // hook:两种情况下一张瓦片需要不止一次取瓦,都由 extras 的数据源接管——本类
     // 自身的 TileLoader 只负责其中"主"的那一次(URL 已在 Resource::tile 里换好),
     // 其余由数据源自取,全部到位后在 setData 合成:
@@ -66,7 +67,7 @@ void VectorMVTTile::flushDataSource() {
 }
 
 bool VectorMVTTile::holdForFade() const {
-    if (extras::tileSubdivision(id.canonical.z, id.canonical.x, id.canonical.y).steps < 0) {
+    if (mergedTile) {
         return false; // 见头文件注释
     }
     return GeometryTile::holdForFade();

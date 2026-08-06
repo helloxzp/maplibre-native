@@ -176,15 +176,11 @@ public:
     virtual void sourceRows(uint8_t z, uint32_t y, uint32_t& r0, uint32_t& r1) const noexcept = 0;
 };
 
-/// 当前是否有取瓦网格映射生效。
-bool tileGridActive() noexcept;
-
 /// leg0:墨卡托行 y 的北缘所在度数行;无扩展生效时原样返回 y。
 /// Resource::tile() 在子分重映射之前调用。
+/// (tile-grid 的其余辅助函数只有 extras 内部消费,声明在 src 侧的 tile_grid.hpp
+/// —— 本头文件只保留上游真正依赖的契约。)
 uint32_t tileGridLeg0Row(uint8_t z, uint32_t y) noexcept;
-
-/// 墨卡托瓦片覆盖的度数行区间;无扩展生效时 r0=r1=y。
-void tileGridSourceRows(uint8_t z, uint32_t y, uint32_t& r0, uint32_t& r1) noexcept;
 
 /// 经纬度到归一化世界坐标的平面投影。
 ///

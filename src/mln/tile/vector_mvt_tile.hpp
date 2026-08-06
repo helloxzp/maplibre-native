@@ -32,6 +32,13 @@ public:
     bool holdForFade() const override;
 
 private:
+    /// 本瓦片是否负子分合成瓦。canonical 一生不变,构造时判一次,
+    /// holdForFade 每帧被问好几遍,不必反复查层级映射表。
+    const bool mergedTile;
+
+public:
+
+private:
     /// 把数据源当前的合成结果交给 GeometryTile;渐进式数据源每有一片到达就调一次。
     void flushDataSource();
 
