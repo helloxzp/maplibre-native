@@ -1,4 +1,5 @@
 #include <mln/renderer/tile_pyramid.hpp>
+#include <mln/extras/hooks.hpp>
 #include <mln/renderer/paint_parameters.hpp>
 #include <mln/renderer/render_source.hpp>
 #include <mln/renderer/tile_parameters.hpp>
@@ -135,7 +136,12 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
                 panZoom = std::max<int32_t>(tileZoom - prefetchZoomDelta, zoomRange.min);
             }
 
-            if (panZoom < idealZoom) {
+            // hook:占位层级换不到**更粗的数据层**(稀疏金字塔最粗档以下,z-delta
+            // 还是同一批源瓦的负子分合成 —— 更贵、更空)就不发。无扩展生效时
+            // tileSubdivision 恒等,条件退化为 panZoom < idealZoom,行为与原版一致。
+            if (panZoom < idealZoom &&
+                extras::tileSubdivision(static_cast<uint8_t>(panZoom), 0, 0).dataZ <
+                    extras::tileSubdivision(static_cast<uint8_t>(idealZoom), 0, 0).dataZ) {
                 panTiles = util::tileCover(tileCoverParameters, panZoom, zoomRange);
             }
         }
@@ -184,6 +190,13 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
     }
     auto createTileFn = [&](const OverscaledTileID& tileID) -> Tile* {
         if (tileRange && !tileRange->contains(tileID.canonical)) {
+            return nullptr;
+        }
+        // hook:父链回退同理 —— 祖先换不到更粗的数据层(负子分把同一批源瓦
+        // 合成得更大更空)就不值得为回退**新建**;已存在的仍照常复用。
+        if (static_cast<int32_t>(tileID.overscaledZ) < tileZoom &&
+            extras::tileSubdivision(static_cast<uint8_t>(tileID.overscaledZ), 0, 0).dataZ >=
+                extras::tileSubdivision(static_cast<uint8_t>(std::min(tileZoom, 30)), 0, 0).dataZ) {
             return nullptr;
         }
         std::unique_ptr<Tile> tile = cache.pop(tileID);

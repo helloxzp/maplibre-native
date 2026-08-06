@@ -65,6 +65,13 @@ void VectorMVTTile::flushDataSource() {
     }
 }
 
+bool VectorMVTTile::holdForFade() const {
+    if (extras::tileSubdivision(id.canonical.z, id.canonical.x, id.canonical.y).steps < 0) {
+        return false; // 见头文件注释
+    }
+    return GeometryTile::holdForFade();
+}
+
 void VectorMVTTile::setData(const std::shared_ptr<const std::string>& data_) {
     if (obsolete) {
         return;

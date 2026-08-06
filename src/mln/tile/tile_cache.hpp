@@ -13,6 +13,13 @@
 
 namespace mln {
 
+/// 瓦片对象缓存。
+///
+/// 键**无视 wrap**(按 canonical 归一化存取,命中时把请求方的 wrap 盖回瓦片 id):
+/// wrap 只描述"画在哪个世界拷贝",内容完全相同。按含 wrap 的键存取的话,低缩放
+/// 环绕平移每跨一次日界线,相机经度就回卷一次(TilePyramid::handleWrapJump),
+/// 离屏时存进来的 wrap 与转一圈后再请求的 wrap 永远对不齐 —— pop 全部落空,
+/// 每一圈都整列重建(负子分合成瓦一次几百毫秒,屏幕一列列闪白;真机踩过)。
 class TileCache {
 public:
     TileCache(const TaggedScheduler& threadPool_, size_t size_ = 0)

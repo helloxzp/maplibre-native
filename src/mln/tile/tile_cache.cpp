@@ -1,5 +1,7 @@
 #include <mln/tile/tile_cache.hpp>
 
+#include <mln/util/logging.hpp>
+
 #include <mln/actor/scheduler.hpp>
 #include <mln/util/instrumentation.hpp>
 
@@ -16,6 +18,13 @@ TileCache::~TileCache() {
     std::unique_lock counterLock{deferredSignalLock};
     deferredSignal.wait(counterLock, [&]() { return deferredDeletionsPending == 0; });
 }
+
+namespace {
+/// 缓存键:抹平 wrap(见类注释)。
+OverscaledTileID cacheKey(const OverscaledTileID& id) {
+    return {id.overscaledZ, 0, id.canonical};
+}
+} // namespace
 
 void TileCache::setSize(size_t size_) {
     MLN_TRACE_FUNC();
@@ -107,20 +116,21 @@ void TileCache::add(const OverscaledTileID& key, std::unique_ptr<Tile>&& tile) {
         return;
     }
 
-    const auto result = tiles.insert(std::make_pair(key, std::unique_ptr<Tile>{}));
+    const auto k = cacheKey(key);
+    const auto result = tiles.insert(std::make_pair(k, std::unique_ptr<Tile>{}));
     if (result.second) {
         // inserted
         result.first->second = std::move(tile);
     } else {
         // already present
         // remove existing tile key to move it to the end
-        orderedKeys.remove(key);
+        orderedKeys.remove(k);
         // release the newly-provided item
         deferredRelease(std::move(tile));
     }
 
     // (re-)insert tile key as newest
-    orderedKeys.push_back(key);
+    orderedKeys.push_back(k);
 
     // purge oldest key/tile if necessary
     if (orderedKeys.size() > size) {
@@ -131,7 +141,7 @@ void TileCache::add(const OverscaledTileID& key, std::unique_ptr<Tile>&& tile) {
 }
 
 Tile* TileCache::get(const OverscaledTileID& key) {
-    auto it = tiles.find(key);
+    auto it = tiles.find(cacheKey(key));
     if (it != tiles.end()) {
         return it->second.get();
     } else {
@@ -142,18 +152,20 @@ Tile* TileCache::get(const OverscaledTileID& key) {
 std::unique_ptr<Tile> TileCache::pop(const OverscaledTileID& key) {
     std::unique_ptr<Tile> tile;
 
-    const auto it = tiles.find(key);
+    const auto it = tiles.find(cacheKey(key));
     if (it != tiles.end()) {
         tile = std::move(tiles.extract(it).mapped());
-        orderedKeys.remove(key);
+        orderedKeys.remove(cacheKey(key));
         assert(tile->isRenderable());
+        // 盖回请求方的 wrap:缓存里躺过一圈,世界拷贝可能已不同。
+        tile->id = key;
     }
 
     return tile;
 }
 
 bool TileCache::has(const OverscaledTileID& key) {
-    return tiles.find(key) != tiles.end();
+    return tiles.find(cacheKey(key)) != tiles.end();
 }
 
 void TileCache::clear() {

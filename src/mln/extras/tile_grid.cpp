@@ -435,6 +435,15 @@ public:
                 Cell cell;
                 cell.offX = ox;
                 cell.offY = oy;
+                // 到达通知按**格**冒泡而不是按 leg:渐进式对每次通知都全量重建
+                // 一遍(64 格的 z0 实测重建 112 次,把工作线程翻炒到饱和),而
+                // 半格数据本来就画不出来,等格子集齐再通知,重建次数掉一个量级。
+                // FileSource 回调与本构造同线程(RunLoop),cells 下标此时已稳定。
+                auto cellArrived = [this, idx = cells.size(), onArrived] {
+                    if (onArrived && idx < cells.size() && cells[idx].src->ready()) {
+                        onArrived();
+                    }
+                };
                 if (tileGridActive()) {
                     cell.src = std::make_unique<TileGridDualFetch>(fileSource,
                                                                    urlTemplate,
@@ -444,7 +453,7 @@ public:
                                                                    dataZ,
                                                                    baseX + ox,
                                                                    baseY + oy,
-                                                                   onArrived,
+                                                                   cellArrived,
                                                                    /*fetchPrimary=*/!primary);
                 } else {
                     cell.src = std::make_unique<SingleTileFetch>(fileSource,
@@ -455,7 +464,7 @@ public:
                                                                  baseX + ox,
                                                                  baseY + oy,
                                                                  /*fetchSelf=*/!primary,
-                                                                 onArrived);
+                                                                 cellArrived);
                 }
                 cells.push_back(std::move(cell));
             }
