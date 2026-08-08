@@ -79,6 +79,7 @@ private:
     TileCache cache;
 
     std::map<UnwrappedTileID, std::reference_wrapper<Tile>> renderedTiles; // Sorted by tile id.
+    double prevZoom = 0;                                                   // hook:仅用于判断"正在放大"
     TileObserver* observer = nullptr;
 
     float prevLng = 0;

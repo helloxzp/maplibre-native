@@ -11,6 +11,7 @@
 #include <mln/util/projection.hpp>
 
 #include <algorithm>
+#include <cmath>
 
 #include <atomic>
 #include <cstdint>
@@ -318,6 +319,18 @@ TileSubdivision tileSubdivision(uint8_t z, uint32_t x, uint32_t y) noexcept {
     TileSubdivision sub;
     sub.dataZ = z;
     return sub;
+}
+
+bool symbolDataCoarse(uint8_t z, double cameraZoom) noexcept {
+    auto* scheme = activeScheme.load(std::memory_order_acquire);
+    if (!scheme) {
+        return false;
+    }
+    // 与 util::coveringZoomLevel 的矢量路径同式:floor 后交给 scheme 补进位点与
+    // 瓦片尺寸平移(sizeShift 在 scheme 内部,引擎侧源仍按 512 声明,不会重复平移)。
+    const int32_t ideal = std::clamp(
+        scheme->coveringZoom(cameraZoom, static_cast<int32_t>(std::floor(cameraZoom))), 0, 30);
+    return scheme->subdivision(z, 0, 0).dataZ < scheme->subdivision(static_cast<uint8_t>(ideal), 0, 0).dataZ;
 }
 
 } // namespace extras

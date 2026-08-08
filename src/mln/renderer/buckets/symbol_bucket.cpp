@@ -306,7 +306,7 @@ void SymbolBucket::updateVertices(const Placement& placement,
                                   const RenderTile& tile,
                                   std::set<uint32_t>& seenIds) {
     if (updateOpacities) {
-        placement.updateBucketOpacities(*this, state, seenIds);
+        placement.updateBucketOpacities(*this, state, tile, seenIds);
         placementChangesUploaded = false;
         uploaded = false;
     }

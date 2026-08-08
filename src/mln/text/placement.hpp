@@ -172,7 +172,7 @@ protected:
 
     // Returns `true` if bucket vertices were updated; returns `false` otherwise.
     bool updateBucketDynamicVertices(SymbolBucket&, const TransformState&, const RenderTile& tile) const;
-    void updateBucketOpacities(SymbolBucket&, const TransformState&, std::set<uint32_t>&) const;
+    void updateBucketOpacities(SymbolBucket&, const TransformState&, const RenderTile&, std::set<uint32_t>&) const;
     void markUsedJustification(SymbolBucket&,
                                style::TextVariableAnchorType,
                                const SymbolInstance&,

@@ -9,6 +9,7 @@
 #include <mln/tile/geometry_tile.hpp>
 #include <mln/util/instrumentation.hpp>
 #include <mln/util/math.hpp>
+#include <mln/extras/hooks.hpp>
 
 #include <list>
 #include <utility>
@@ -235,6 +236,12 @@ Point<float> calculateVariableLayoutOffset(style::SymbolAnchorType anchor,
 
 void Placement::placeSymbolBucket(const BucketPlacementData& params, std::set<uint32_t>& seenCrossTileIDs) {
     assert(updateParameters);
+    // hook:数据级比当前相机应有的更粗的瓦,符号不参与放置 —— 它们不会显示(见
+    // updateBucketOpacities),放了只会占着碰撞位、并把 crossTileID 记进 seen,
+    // 反把正确层级的符号挤成"重复"。无扩展生效时恒假。
+    if (extras::symbolDataCoarse(params.tile.get().getOverscaledTileID().overscaledZ, placementZoom)) {
+        return;
+    }
     const auto& symbolBucket = static_cast<const SymbolBucket&>(params.bucket.get());
     const RenderTile& renderTile = params.tile;
     PlacementContext ctx{symbolBucket,
@@ -961,7 +968,14 @@ bool Placement::updateBucketDynamicVertices(SymbolBucket& bucket,
 
 void Placement::updateBucketOpacities(SymbolBucket& bucket,
                                       const TransformState& state,
+                                      const RenderTile& renderTile,
                                       std::set<uint32_t>& seenCrossTileIDs) const {
+    // hook:这里决定符号显示与否 —— 透明度按 crossTileID 记账,每张含该符号的瓦
+    // 都来取,先到者得、后到者判重隐藏。数据级过粗的瓦(坐标偏 2-8px,见
+    // hooks.hpp 的 symbolDataCoarse)一律按重复处理,且不占 seenCrossTileIDs,
+    // 好让正确层级的瓦拿到真实透明度。只在放置一侧拦不住:粗瓦照样会在这里
+    // 取到透明度,把符号画在偏移的位置上。
+    const bool coarseData = extras::symbolDataCoarse(renderTile.getOverscaledTileID().overscaledZ, state.getZoom());
     if (bucket.hasTextData()) bucket.text.sharedOpacityVertices->clear();
     if (bucket.hasIconData()) bucket.icon.sharedOpacityVertices->clear();
     if (bucket.hasSdfIconData()) bucket.sdfIcon.sharedOpacityVertices->clear();
@@ -995,7 +1009,7 @@ void Placement::updateBucketOpacities(SymbolBucket& bucket,
 
     for (SymbolInstance& symbolInstance : bucket.symbolInstances) {
         if (!symbolInstance.check(SYM_GUARD_LOC)) continue;
-        bool isDuplicate = seenCrossTileIDs.contains(symbolInstance.getCrossTileID());
+        bool isDuplicate = coarseData || seenCrossTileIDs.contains(symbolInstance.getCrossTileID());
 
         auto it = opacities.find(symbolInstance.getCrossTileID());
         auto opacityState = defaultOpacityState;
@@ -1005,7 +1019,9 @@ void Placement::updateBucketOpacities(SymbolBucket& bucket,
             opacityState = it->second;
         }
 
-        seenCrossTileIDs.insert(symbolInstance.getCrossTileID());
+        if (!coarseData) {
+            seenCrossTileIDs.insert(symbolInstance.getCrossTileID());
+        }
 
         if (symbolInstance.hasText() || symbolInstance.hasIcon()) {
             if (!symbolInstance.checkIndexes(bucket.text.placedSymbols.size(),

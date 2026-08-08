@@ -97,6 +97,9 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
                                       parameters.transformState.getMinZoom(),
                                       parameters.transformState.getMaxZoom());
 
+    const bool zoomingIn = zoom > prevZoom;
+    prevZoom = zoom;
+
     const auto type = sourceImpl.type;
     // Determine the overzooming/underzooming amounts and required tiles.
     int32_t overscaledZoom = util::coveringZoomLevel(zoom, type, tileSize);
@@ -143,6 +146,36 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
                 extras::tileSubdivision(static_cast<uint8_t>(panZoom), 0, 0).dataZ <
                     extras::tileSubdivision(static_cast<uint8_t>(idealZoom), 0, 0).dataZ) {
                 panTiles = util::tileCover(tileCoverParameters, panZoom, zoomRange);
+            }
+
+            // hook:**边界预取** —— 正在放大且逼近"下一个更细数据级"时,先把那一级
+            // 的源数据灌进缓存,搭 panTiles 的顺风车(同样只取不渲染)。
+            //
+            // 跨过数据级边界的一瞬手上只有粗一级的瓦,而粗瓦的符号不予显示(见
+            // hooks.hpp 的 symbolDataCoarse),POI 要等新数据到货 —— 视觉上是
+            // "一瞬间消失又出现",实测全新区域约 1 秒。预取该数据级里**最粗的一档**
+            // 而非即将进入的那一档:两者请求同一批 URL(URL 层级由数据级决定),但
+            // 最粗档覆盖同样视野只要几张瓦,目标档要几十张;源数据进了缓存,跨过去
+            // 时细档瓦只需解析、不必联网。便宜,所以提前量敢给到一整档。
+            //
+            // 只在放大时预取:停着或平移时相机不会跨边界,预热纯属浪费(实测停在
+            // 13.0 平移就白拉 237 张细级瓦)。缩小方向也不需要:残留的细瓦本就允许
+            // 继续供符号。门控复用 symbolDataCoarse(理想档瓦, zoom+1)——语义恰是
+            // "提前一档看,理想档的数据是否已算粗";无扩展生效时它恒假,原版
+            // **绝不会**走进预取(直接拿 dataZ(f)>dataZ(ideal) 判是不行的:恒等时
+            // f=ideal+1 恒满足,原版放大会白预取下一层级)。
+            if (zoomingIn &&
+                extras::symbolDataCoarse(static_cast<uint8_t>(std::clamp(idealZoom, 0, 30)), zoom + 1.0)) {
+                const uint8_t curDataZ = extras::tileSubdivision(static_cast<uint8_t>(idealZoom), 0, 0).dataZ;
+                const int32_t reachZoom = std::min<int32_t>(
+                    zoomRange.max, util::coveringZoomLevel(zoom + 1.0, type, tileSize));
+                for (int32_t f = idealZoom + 1; f <= reachZoom; ++f) {
+                    if (extras::tileSubdivision(static_cast<uint8_t>(f), 0, 0).dataZ > curDataZ) {
+                        const auto ahead = util::tileCover(tileCoverParameters, f, zoomRange);
+                        panTiles.insert(panTiles.end(), ahead.begin(), ahead.end());
+                        break; // 该数据级最粗的一档,瓦最少
+                    }
+                }
             }
         }
 
