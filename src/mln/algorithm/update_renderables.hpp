@@ -149,6 +149,14 @@ void updateRenderables(GetTileFn getTile,
                         auto* prefetchedTile = prefetchedTileEntry.second.get();
                         if (prefetchedTile->isRenderable() && prefetchedDataTileID.canonical.z <= zoomRange.max &&
                             prefetchedDataTileID.isChildOf(idealDataTileID)) {
+                            // hook:这条兜底同样要尊重 getTile 的过滤。原版下恒等
+                            // (扫的就是 getTile 背后的同一张表,判空恒不成立);
+                            // 稀疏方案的理想层 getTile 会滤掉"数据更细且从未显示过"
+                            // 的瓦(边界预取灌进来的),不然它们从这里漏进渲染 ——
+                            // 为更深相机准备的路网密度提前铺屏、理想瓦一到又消失。
+                            if (!getTile(prefetchedDataTileID)) {
+                                continue;
+                            }
                             retainTile(*prefetchedTile, TileNecessity::Optional);
                             renderTile(prefetchedRenderTileID, *prefetchedTile);
                         }

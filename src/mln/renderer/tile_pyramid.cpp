@@ -244,6 +244,34 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
 
     auto previouslyRenderedTiles = std::move(renderedTiles);
 
+    // hook:子瓦回退不吃"数据更细、且上一帧没显示过"的瓦。
+    //
+    // 边界预取(见上)会把下一数据级的瓦提前灌进 tiles;理想瓦尚未建好时,
+    // updateRenderables 的子瓦回退会发现这些**数据细两级**的瓦已就绪并直接
+    // 渲染 —— 为更深相机准备的内容(路网密度天差地别)突然铺满屏,理想瓦
+    // 一到又整片退场,肉眼就是"路网提前出现、闪一下消失"。
+    //
+    // 判据带"上一帧显示过"是为了放行另一种同形状的情况:缩小跨档时,刚显示
+    // 过的细级子瓦要继续垫场到粗级理想瓦就绪,那是连续性,不是闪现。
+    // 恒等(无扩展)时 dataZ == z,子瓦(z+1)必"数据更细"——但原版金字塔各级
+    // 同源,子瓦只会来自"刚显示过"的缩小残留,预取也不存在,行为不变。
+    const auto idealPassZ = static_cast<uint8_t>(std::clamp(tileZoom, 0, 30));
+    const uint8_t idealPassDataZ = extras::tileSubdivision(idealPassZ, 0, 0).dataZ;
+    auto getTileForIdealFn = [&](const OverscaledTileID& tileID) -> Tile* {
+        if (static_cast<int32_t>(tileID.overscaledZ) > tileZoom &&
+            previouslyRenderedTiles.find(tileID.toUnwrapped()) == previouslyRenderedTiles.end()) {
+            const uint8_t dz = extras::tileSubdivision(tileID.overscaledZ, 0, 0).dataZ;
+            // 恒等(无扩展)时子瓦 dataZ==z 恒大于理想 dataZ,单靠大小比较会把原版
+            // 的"后台加载完成的子瓦垫场"也挡掉 —— 补一条"确有跨数据级映射参与"
+            // 的判据(子瓦或理想档任一非恒等),原版下恒不成立,行为逐位一致。
+            if (dz > idealPassDataZ && (dz != tileID.overscaledZ || idealPassDataZ != idealPassZ)) {
+                return nullptr;
+            }
+        }
+        auto it = tiles.find(tileID);
+        return it == tiles.end() ? nullptr : it->second.get();
+    };
+
     auto renderTileFn = [&](const UnwrappedTileID& tileID, Tile& tile) {
         addRenderTile(tileID, tile);
         previouslyRenderedTiles.erase(tileID); // Still rendering this tile, no need for special fading logic.
@@ -264,7 +292,7 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
             maxParentTileOverscaleFactor);
     }
 
-    algorithm::updateRenderables(getTileFn,
+    algorithm::updateRenderables(getTileForIdealFn,
                                  createTileFn,
                                  retainTileFn,
                                  renderTileFn,
