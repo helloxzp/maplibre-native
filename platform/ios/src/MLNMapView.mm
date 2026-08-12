@@ -1694,6 +1694,21 @@ public:
     newFrameRate = _preferredFramesPerSecond;
   }
 
+  // hook:app 指定了具体帧率时,iOS 15+ 不再用固定值钳死,而是给系统一个区间
+  // (min 30, preferred 指定值, max 屏幕原生):手势/动画需要时系统可短暂冲到
+  // 高刷,静止或热压力下自动滑落 —— 流畅度与发热的权衡交还给系统调度
+  // (Apple 自 iOS 15 起的推荐做法,CADisplayLink.preferredFrameRateRange)。
+  // Default/Maximum 两个语义值维持原行为;iOS 15 以下回落到固定值路径。
+  if (@available(iOS 15.0, *)) {
+    if (newFrameRate > 0) {
+      const float native = (float)UIScreen.mainScreen.maximumFramesPerSecond;
+      const float preferred = MIN((float)newFrameRate, native);
+      const float minimum = MIN(30.0f, preferred);
+      _displayLink.preferredFrameRateRange = CAFrameRateRangeMake(minimum, native, preferred);
+      return;
+    }
+  }
+
   if (@available(iOS 10.0, *)) {
     _displayLink.preferredFramesPerSecond = newFrameRate;
   } else {
