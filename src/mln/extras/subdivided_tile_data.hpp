@@ -159,18 +159,27 @@ inline void clipRing(const std::vector<Point32>& ring, GeometryCollection& out) 
 /// 要素做一遍 varint 几何解码加包围盒扫描,而其中 3/4 ~ 15/16 的要素最终会因
 /// 落在子格之外被丢弃。这里把包围盒做成兄弟共享的一次性工作:首个访问某图层
 /// 的子瓦片负责构建(call_once,其余兄弟等待),之后所有兄弟对每个要素都是
-/// O(1) 判定,被拒要素**连解码都不发生**;留下的要素才由各自兄弟按需解码
-/// (子格互不重叠,每个要素通常只被解码一次,跨界要素最多几次)。
+/// O(1) 判定,被拒要素**连解码都不发生**;留下的要素直接取槽里保留的几何
+/// (超体量上限未保留的才由命中的兄弟自行解码,见下)。
 ///
-/// 刻意**只存包围盒不存几何**:全量缓存解码几何在大祖先(z7 约 5.9MB)上会驻留
-/// 约 8-10MB/张;包围盒每要素 24 字节,z7 全瓦片约 370KB,内存增量可忽略,而
-/// 省掉的重复劳动大头(被拒要素)完全一样。
+/// 构建期反正解码了一遍,**顺手把几何留在槽里**(带体量上限,见下):消费侧
+/// 命中包围盒后不再重新解码,兄弟集合的总解码从"建索引 1× + 各自消费 ~1×"
+/// 降到 ~1×。曾经刻意只存包围盒不存几何,依据是大祖先的驻留(z7 约 5.9MB pbf
+/// 解码态 8-10MB/张)——那个量级的元凶是世界级海岸线一类的巨型要素,所以现在
+/// 改为**逐要素设点数上限**:超限的不保留(消费方照旧自行解码,行为不变),
+/// 常规城市要素(z10-14,点数远低于上限)全量保留。上限下的最坏驻留
+/// ≈ 要素数 × 上限 × 8B,且窗口仅覆盖"兄弟们还在 layout"的时段(见下)。
 ///
 /// 生命周期由 shared_ptr 决定:注册表(见 extras.cpp 的 sharedParentIndex)只持
 /// weak_ptr,全部子瓦片释放后索引随之释放,不需要独立的淘汰策略,也不会泄漏。
 /// 构建完成后各槽只读,跨 worker 线程共享安全。
 class ParentGeometryIndex {
 public:
+    /// 单要素保留几何的点数上限。z14 城市瓦的线/面要素通常几十到几百个点,
+    /// 远低于此;世界级海岸线面(数万点)超限不保留 —— 它们正是"全量缓存
+    /// 8-10MB 驻留"的来源,而它们本来就只被极少数子格命中,重复解码占比小。
+    static constexpr std::size_t retainPointCap = 4096;
+
     struct FeatureSlot {
         FeatureType type = FeatureType::Unknown;
         /// 源坐标包围盒;空要素以 maxX < minX 标记。
@@ -178,6 +187,9 @@ public:
         int32_t minY = 0;
         int32_t maxX = -1;
         int32_t maxY = -1;
+        /// 构建期解码几何的保留(祖先本地坐标,未变换)。超过 retainPointCap
+        /// 的要素为空,消费方退回自行解码。
+        std::optional<GeometryCollection> geometry;
     };
 
     /// 取某图层的要素槽;首次访问时用 `source` 构建。
@@ -198,12 +210,14 @@ public:
                 const auto feature = source.getFeature(i);
                 FeatureSlot out;
                 out.type = feature->getType();
-                const auto& geometry = feature->getGeometries(); // 构建期一次解码,只留包围盒
+                const auto& geometry = feature->getGeometries(); // 构建期一次解码
                 int32_t minX = std::numeric_limits<int32_t>::max();
                 int32_t minY = std::numeric_limits<int32_t>::max();
                 int32_t maxX = std::numeric_limits<int32_t>::min();
                 int32_t maxY = std::numeric_limits<int32_t>::min();
+                std::size_t points = 0;
                 for (const auto& ring : geometry) {
+                    points += ring.size();
                     for (const auto& p : ring) {
                         minX = std::min<int32_t>(minX, p.x);
                         minY = std::min<int32_t>(minY, p.y);
@@ -216,8 +230,13 @@ public:
                     out.minY = minY;
                     out.maxX = maxX;
                     out.maxY = maxY;
+                    // 反正解码了,顺手保留(带上限):命中本槽的兄弟不再重解码。
+                    // clone() 是上游对"确要拷贝"的显式出口(拷贝构造私有防误拷)。
+                    if (points <= retainPointCap) {
+                        out.geometry = geometry.clone();
+                    }
                 }
-                slot->features.push_back(out);
+                slot->features.push_back(std::move(out));
             }
         });
         return slot->features;
@@ -346,7 +365,9 @@ public:
         }
 
         if (!source) {
-            source = &inner->getGeometries(); // 包围盒通过后才解码(共享索引路径)
+            // 包围盒通过后才取几何(共享索引路径):构建期保留过的直接用,免去
+            // 重解码;超上限未保留的才回落到逐要素解码。
+            source = (slot && slot->geometry) ? &*slot->geometry : &inner->getGeometries();
         }
         GeometryCollection out;
         out.reserve(source->size());
