@@ -321,6 +321,10 @@ TileSubdivision tileSubdivision(uint8_t z, uint32_t x, uint32_t y) noexcept {
     return sub;
 }
 
+bool tileSchemeActive() noexcept {
+    return activeScheme.load(std::memory_order_acquire) != nullptr;
+}
+
 bool symbolDataCoarse(uint8_t z, double cameraZoom) noexcept {
     auto* scheme = activeScheme.load(std::memory_order_acquire);
     if (!scheme) {

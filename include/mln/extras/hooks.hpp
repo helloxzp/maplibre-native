@@ -259,6 +259,15 @@ WorldBounds worldBounds() noexcept;
 /// 恒返回 false,消费方行为与原版完全一致。
 bool symbolDataCoarse(uint8_t z, double cameraZoom) noexcept;
 
+/// 是否有瓦片层级方案在生效(含 tile-size / zoom-carry 等任一扩展键)。
+///
+/// 给 MainResourceLoader 的同 URL 在途合并当门控:稀疏方案下多张瓦片共享同一
+/// 条数据 URL(子分兄弟 4~256 张、tile-grid 相邻行的度数 leg),这在原版
+/// "一瓦一 URL"的世界里不存在——原版唯一的同 URL 并发是 wrap 副本,量级可
+/// 忽略,不值得为它改变网络层行为。无扩展生效时恒 false,合并不启用,
+/// 网络层行为与原版逐位一致。
+bool tileSchemeActive() noexcept;
+
 /// world-bounds 生效时经度回卷必须禁用:数据矩形不是 360° 周期的,把越界经度
 /// 按 ±360 回卷会把相机传送到另一侧(边界处重滑即"从左边跑到右边")。
 /// 无扩展生效时返回 false,回卷行为与原版完全一致。
