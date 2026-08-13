@@ -122,6 +122,7 @@ MLN_CORE_SOURCE = [
     "src/mln/algorithm/update_renderables.hpp",
     "src/mln/algorithm/update_tile_masks.hpp",
     "src/mln/extras/subdivided_tile_data.hpp",
+    "src/mln/extras/merged_tile_data.hpp",
     "src/mln/extras/projection.cpp",
     "src/mln/extras/projection.hpp",
     "src/mln/extras/extras.cpp",
