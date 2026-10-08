@@ -3,7 +3,7 @@
 // MapLibre iOS（xunji fork）的 SwiftPM 发布清单。
 //
 // 这个 spm 分支是孤立分支，只放本文件，不含源码 —— 源码在 ppp 分支。
-// 每次发版由 ppp 分支的 xunji-release workflow 构建 xcframework、上传到同名 Release，
+// 每次发版由 ppp 分支的 xunji-release-ios workflow 构建 xcframework、上传到同名 Release，
 // 再更新这里的 url / checksum 并打 semver 标签（<上游版本>-xunji.<n>）。
 import PackageDescription
 
